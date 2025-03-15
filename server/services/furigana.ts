@@ -14,6 +14,35 @@ const MAX_CONSECUTIVE_ERRORS = 5
 const HIRAGANA_REGEX = /^[\u3040-\u309F]+$/
 const KATAKANA_REGEX = /^[\u30A0-\u30FF]+$/
 const KANJI_REGEX = /[\u4E00-\u9FAF\u3400-\u4DBF]/
+const JAPANESE_CHAR_REGEX = /[\u3000-\u303f\u3040-\u309f\u30a0-\u30ff\uff00-\uff9f\u4e00-\u9faf\u3400-\u4dbf]/g
+
+// Minimum percentage of Japanese characters required to process furigana (40%)
+const MIN_JAPANESE_PERCENTAGE = 0.4
+
+/**
+ * Check if text contains enough Japanese characters to warrant furigana processing
+ * @param text The text to check
+ * @returns Boolean indicating if furigana should be processed
+ */
+export function shouldProcessFurigana(text: string): boolean {
+  if (!text || typeof text !== 'string' || text.trim() === '') {
+    return false
+  }
+  
+  // Count Japanese characters
+  const japaneseMatches = text.match(JAPANESE_CHAR_REGEX)
+  const japaneseCount = japaneseMatches ? japaneseMatches.length : 0
+  
+  // Calculate percentage of Japanese characters
+  const totalChars = text.replace(/\s/g, '').length // Ignore whitespace
+  if (totalChars === 0) return false
+  
+  const japanesePercentage = japaneseCount / totalChars
+  
+  console.log(`[Furigana] Japanese character percentage: ${(japanesePercentage * 100).toFixed(2)}% (${japaneseCount}/${totalChars})`)
+  
+  return japanesePercentage >= MIN_JAPANESE_PERCENTAGE
+}
 
 /**
  * Generates furigana for Japanese text
@@ -31,14 +60,21 @@ export async function makeFurigana(text: string, retryCount = 0): Promise<Array<
   try {
     console.log(`[Furigana] Processing text: "${text.substring(0, 30)}${text.length > 30 ? '...' : ''}"`)
     
-    // Check if text contains Japanese characters
-    if (!KANJI_REGEX.test(text) && !HIRAGANA_REGEX.test(text) && !KATAKANA_REGEX.test(text)) {
-      console.log('[Furigana] Text contains no Japanese characters, skipping tokenization')
+    // Check if text contains enough Japanese characters
+    if (!shouldProcessFurigana(text)) {
+      console.log('[Furigana] Text does not contain enough Japanese characters, skipping tokenization')
       return [{ text }]
     }
     
-    // Tokenize the text
-    const tokens = await tokenize(text)
+    // Tokenize the text with better error handling
+    let tokens;
+    try {
+      tokens = await tokenize(text)
+    } catch (tokenizeError) {
+      console.error('[Furigana] Tokenization failed:', tokenizeError)
+      // If tokenization fails, return the original text
+      return [{ text }]
+    }
     
     if (!tokens || tokens.length === 0) {
       console.warn('[Furigana] Tokenization returned no tokens')
@@ -77,30 +113,18 @@ export async function makeFurigana(text: string, retryCount = 0): Promise<Array<
  */
 function processTokens(tokens: Token[]): Array<{ text: string; furigana?: string }> {
   return tokens.map(token => {
-    const { surface_form, reading } = token
+    const surface = token.surface_form
+    const reading = token.reading
     
-    // Skip processing if token is empty
-    if (!surface_form || surface_form.trim() === '') {
-      return { text: surface_form }
+    // Only add furigana if reading is different from surface form
+    // and if the surface form contains kanji
+    const hasKanji = /[\u4E00-\u9FAF\u3400-\u4DBF]/.test(surface)
+    const needsFurigana = hasKanji && reading && reading !== surface
+    
+    return { 
+      text: surface, 
+      furigana: needsFurigana ? reading : undefined 
     }
-    
-    // If no reading is available, return just the text
-    if (!reading || reading === surface_form) {
-      return { text: surface_form }
-    }
-    
-    // Check if the token contains kanji
-    if (!KANJI_REGEX.test(surface_form)) {
-      return { text: surface_form }
-    }
-    
-    // If the reading is in katakana, convert to hiragana for furigana
-    let furigana = reading
-    if (KATAKANA_REGEX.test(reading)) {
-      furigana = katakanaToHiragana(reading)
-    }
-    
-    return { text: surface_form, furigana }
   })
 }
 

@@ -45,7 +45,22 @@ const selectedAudioTrack = ref<number>(0)
 const playbackRate = ref(1)
 const showSubtitleInfo = ref(false)
 
-const hasSubtitles = computed(() => store.showSubtitles && store.activeCaptions.length > 0)
+// Update hasSubtitles to use allActiveCaptions instead of activeCaptions
+const hasSubtitles = computed(() => store.showSubtitles && store.allActiveCaptions.length > 0)
+
+// Add computed property to check if we have secondary subtitles
+const hasSecondarySubtitles = computed(() => {
+  if (!store.showSecondarySubtitles) return false
+  
+  // Check if we have any active captions from secondary tracks
+  return store.subtitleTracks.some((track, index) => 
+    index !== store.activeTrackIndex && 
+    track.captions.some(caption => 
+      caption.startTime <= props.currentTime && 
+      props.currentTime <= caption.endTime
+    )
+  )
+})
 
 // Add computed property for captions URL
 const captionsUrl = computed(() => {
@@ -211,9 +226,11 @@ function processText(text: string): string {
     .replace(/&lt;/g, '<') // Replace &lt; with <
     .replace(/&gt;/g, '>') // Replace &gt; with >
   
-  // For ASS subtitles, ensure proper spacing for non-Japanese text
-  // This helps with languages that use Latin script but might have formatting issues
-  const isJapanese = /[\u3000-\u303f\u3040-\u309f\u30a0-\u30ff\uff00-\uff9f\u4e00-\u9faf\u3400-\u4dbf]/.test(processed)
+  // Check if text contains Japanese characters
+  const japaneseMatches = processed.match(/[\u3000-\u303f\u3040-\u309f\u30a0-\u30ff\uff00-\uff9f\u4e00-\u9faf\u3400-\u4dbf]/g)
+  const japaneseCount = japaneseMatches ? japaneseMatches.length : 0
+  const totalChars = processed.replace(/\s/g, '').length // Ignore whitespace
+  const isJapanese = totalChars > 0 && (japaneseCount / totalChars) >= 0.4 // 40% threshold
   
   if (!isJapanese) {
     // Fix common ASS subtitle formatting issues:
@@ -349,7 +366,7 @@ defineExpose({
         
         <!-- Secondary tracks -->
         <div
-          v-if="store.showSecondarySubtitles"
+          v-if="hasSecondarySubtitles"
           v-for="(track, trackIndex) in store.subtitleTracks.filter((_, i) => i !== store.activeTrackIndex)"
           :key="`track-${trackIndex}`"
           class="subtitle-track"
@@ -458,11 +475,24 @@ defineExpose({
 
 .primary-track {
   color: white;
+  font-weight: 600;
+  text-shadow: 
+    0 0 5px rgba(0,0,0,0.9),
+    0 0 10px rgba(0,0,0,0.7),
+    0 0 15px rgba(0,0,0,0.5);
 }
 
 .secondary-track {
   color: #ffeb3b; /* Yellow color for secondary tracks */
   font-size: 1.6rem;
+  opacity: 0.9;
+  text-shadow: 
+    0 0 5px rgba(0,0,0,0.9),
+    0 0 8px rgba(0,0,0,0.7);
+  background-color: rgba(0, 0, 0, 0.4);
+  border-radius: 8px;
+  padding: 0.3em 0.5em;
+  margin-top: 0.5em;
 }
 
 .lane-0 { transform: translateY(0); }
@@ -499,6 +529,7 @@ defineExpose({
 
   .secondary-track {
     font-size: 1rem;
+    padding: 0.2em 0.4em;
   }
 }
 </style> 

@@ -1,4 +1,4 @@
-import * as kuromoji from 'kuromoji'
+// import * as kuromoji from 'kuromoji'
 import type { Token } from '~/types'
 
 // Track initialization state
@@ -14,6 +14,40 @@ let lastError: Error | null = null
 let consecutiveErrors = 0
 const MAX_CONSECUTIVE_ERRORS = 5
 
+// Flag to track if we're in a browser environment
+const isBrowser = typeof window !== 'undefined'
+
+// Add a function to dynamically import kuromoji
+async function getKuromoji() {
+  try {
+    // In browser, we can't use kuromoji directly
+    if (isBrowser) {
+      console.log('[Kuromoji] Browser environment detected, kuromoji is not supported in browser')
+      return null
+    }
+    
+    // Use dynamic import for server environment
+    if (process.server) {
+      try {
+        // Use dynamic import instead of require
+        const kuromoji = await import('kuromoji')
+        return kuromoji.default || kuromoji
+      } catch (importError) {
+        console.error('[Kuromoji] Failed to dynamically import kuromoji:', importError)
+        return null
+      }
+    }
+    
+    
+    // Fallback for other environments
+    console.warn('[Kuromoji] Unable to import kuromoji, not in server environment')
+    return null
+  } catch (error) {
+    console.error('[Kuromoji] Failed to import kuromoji:', error)
+    return null
+  }
+}
+
 export function getTokenizer() {
   return tokenizer
 }
@@ -23,6 +57,12 @@ export function isInitialized() {
 }
 
 export async function initializeTokenizer(): Promise<any> {
+  // If in browser, don't even try to initialize
+  if (isBrowser) {
+    console.log('[Kuromoji] Browser environment detected, skipping initialization')
+    return Promise.reject(new Error('Kuromoji is not supported in browser environment'))
+  }
+
   // If already initialized, return the tokenizer
   if (tokenizer !== null) {
     return tokenizer
@@ -39,8 +79,14 @@ export async function initializeTokenizer(): Promise<any> {
   
   console.log(`[Kuromoji] Initializing tokenizer (attempt ${initializationAttempts}/${MAX_INIT_ATTEMPTS})...`)
   
-  initializationPromise = new Promise((resolve, reject) => {
+  initializationPromise = new Promise(async (resolve, reject) => {
     try {
+      const kuromoji = await getKuromoji()
+      
+      if (!kuromoji) {
+        throw new Error('Failed to import kuromoji library')
+      }
+      
       kuromoji
         .builder({ dicPath: 'node_modules/kuromoji/dict' })
         .build((err: Error | null, _tokenizer: any) => {
@@ -105,6 +151,12 @@ function createSimpleToken(text: string): Token {
 }
 
 export async function analyzeKuromoji(text: string, retryCount = 0): Promise<Token[]> {
+  // If in browser, immediately use simple tokenization
+  if (isBrowser) {
+    console.log('[Kuromoji] Browser environment detected, using simple tokenization')
+    return simpleTokenize(text)
+  }
+
   // If text is empty or not a string, return empty array
   if (!text || typeof text !== 'string' || text.trim() === '') {
     console.warn('[Kuromoji] Empty text provided to analyzeKuromoji function')
@@ -115,11 +167,17 @@ export async function analyzeKuromoji(text: string, retryCount = 0): Promise<Tok
     // Ensure tokenizer is initialized
     if (!isInitialized()) {
       console.log('[Kuromoji] Tokenizer not initialized, initializing now...')
-      await initializeTokenizer()
+      try {
+        await initializeTokenizer()
+      } catch (initError) {
+        console.error('[Kuromoji] Initialization failed, falling back to simple tokenization:', initError)
+        return simpleTokenize(text)
+      }
     }
 
     if (!tokenizer) {
-      throw new Error('Tokenizer initialization failed')
+      console.warn('[Kuromoji] Tokenizer is null, falling back to simple tokenization')
+      return simpleTokenize(text)
     }
 
     console.log(`[Kuromoji] Analyzing text: "${text.substring(0, 30)}${text.length > 30 ? '...' : ''}"`)
@@ -127,11 +185,7 @@ export async function analyzeKuromoji(text: string, retryCount = 0): Promise<Tok
     
     if (!tokens || tokens.length === 0) {
       console.warn('[Kuromoji] Tokenization returned empty result')
-      // For Japanese text, try to split by characters as a fallback
-      if (/[\u3000-\u303f\u3040-\u309f\u30a0-\u30ff\uff00-\uff9f\u4e00-\u9faf\u3400-\u4dbf]/.test(text)) {
-        return Array.from(text).filter(char => char.trim() !== '').map(createSimpleToken)
-      }
-      return text.split(/(\s+)/).filter(Boolean).map(createSimpleToken)
+      return simpleTokenize(text)
     }
     
     console.log(`[Kuromoji] Analysis successful, received ${tokens.length} tokens`)
@@ -164,11 +218,33 @@ export async function analyzeKuromoji(text: string, retryCount = 0): Promise<Tok
       return analyzeKuromoji(text, retryCount + 1)
     }
     
-    // Split text into basic tokens as fallback
-    // For Japanese text, try to split by characters for better results
-    if (/[\u3000-\u303f\u3040-\u309f\u30a0-\u30ff\uff00-\uff9f\u4e00-\u9faf\u3400-\u4dbf]/.test(text)) {
-      return Array.from(text).filter(char => char.trim() !== '').map(createSimpleToken)
-    }
-    return text.split(/(\s+)/).filter(Boolean).map(createSimpleToken)
+    // Use simple tokenization as fallback
+    return simpleTokenize(text)
   }
+}
+
+// Simple tokenizer as fallback
+function simpleTokenize(text: string): Token[] {
+  console.log('[Kuromoji] Using simple tokenizer as fallback')
+  
+  // Japanese character detection regex
+  const JAPANESE_REGEX = /[\u3000-\u303f\u3040-\u309f\u30a0-\u30ff\uff00-\uff9f\u4e00-\u9faf\u3400-\u4dbf]/
+  
+  // For Japanese text, try to split by characters for better results
+  if (JAPANESE_REGEX.test(text)) {
+    return Array.from(text)
+      .filter(char => char.trim() !== '')
+      .map(char => ({
+        surface_form: char,
+        basic_form: char,
+        reading: char,
+        pos: JAPANESE_REGEX.test(char) ? 'japanese' : 'unknown'
+      }))
+  }
+  
+  // For non-Japanese text, split by whitespace and punctuation
+  return text
+    .split(/(\s+|[.,!?;:])/)
+    .filter(Boolean)
+    .map(createSimpleToken)
 } 

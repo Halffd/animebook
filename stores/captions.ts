@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import type { Caption, SubtitleTrack } from '~/types'
 import { makeFurigana, tokenize } from '~/server/services/tokenizer'
 import { useFurigana } from '~/composables/useFurigana'
+import { shouldProcessFurigana } from '~/server/services/furigana'
 
 export const useCaptionsStore = defineStore('captions', () => {
   // Multiple subtitle tracks support
@@ -35,20 +36,30 @@ export const useCaptionsStore = defineStore('captions', () => {
   const allActiveCaptions = computed(() => {
     const active: Caption[] = []
     
-    subtitleTracks.value.forEach((track, index) => {
-      // For the active track, use the activeCaptionIds filter
-      if (index === activeTrackIndex.value) {
-        active.push(...track.captions.filter(caption => 
-          activeCaptionIds.value.includes(caption.id)
-        ))
-      } else if (showSecondarySubtitles.value) {
-        // For other tracks, find captions that would be active at current time
-        active.push(...track.captions.filter(caption => 
+    // First add captions from the active track
+    if (activeTrackIndex.value >= 0 && activeTrackIndex.value < subtitleTracks.value.length) {
+      const activeTrackCaptions = subtitleTracks.value[activeTrackIndex.value].captions.filter(caption => 
+        activeCaptionIds.value.includes(caption.id)
+      )
+      active.push(...activeTrackCaptions)
+    }
+    
+    // Then add captions from secondary tracks if enabled
+    if (showSecondarySubtitles.value) {
+      subtitleTracks.value.forEach((track, index) => {
+        // Skip the active track as we've already added its captions
+        if (index === activeTrackIndex.value) return
+        
+        // Find captions that would be active at current time
+        const secondaryCaptions = track.captions.filter(caption => 
           caption.startTime <= currentTime.value && 
           currentTime.value <= caption.endTime
-        ))
-      }
-    })
+        )
+        
+        // Add them to the active captions list
+        active.push(...secondaryCaptions)
+      })
+    }
     
     return active
   })
@@ -242,8 +253,8 @@ export const useCaptionsStore = defineStore('captions', () => {
     // Process furigana and tokens for each caption
     const processingPromises = parsed.map(async (caption) => {
       try {
-        // Only process Japanese text
-        if (language === 'jpn' || language === 'ja' || !language) {
+        // Check if text contains enough Japanese characters to warrant processing
+        if (shouldProcessFurigana(caption.text)) {
           // Process furigana
           const furiganaResult = await processFurigana(caption.text)
           if (furiganaResult && furiganaResult.length > 0) {
@@ -267,6 +278,8 @@ export const useCaptionsStore = defineStore('captions', () => {
           } catch (tokenError) {
             console.error(`[Store] Error processing tokens for caption: "${caption.text.substring(0, 30)}${caption.text.length > 30 ? '...' : ''}"`, tokenError)
           }
+        } else {
+          console.log(`[Store] Skipping furigana for caption with insufficient Japanese characters: "${caption.text.substring(0, 30)}${caption.text.length > 30 ? '...' : ''}"`)
         }
       } catch (error) {
         console.error(`[Store] Error processing caption: "${caption.text.substring(0, 30)}${caption.text.length > 30 ? '...' : ''}"`, error)
