@@ -245,9 +245,13 @@ export const useCaptionsStore = defineStore('captions', () => {
         // Only process Japanese text
         if (language === 'jpn' || language === 'ja' || !language) {
           // Process furigana
-          const furigana = await processFurigana(caption.text)
-          if (furigana && furigana.length > 0) {
-            caption.furigana = furigana
+          const furiganaResult = await processFurigana(caption.text)
+          if (furiganaResult && furiganaResult.length > 0) {
+            // Convert from new format { text, furigana } to old format [text, furigana]
+            caption.furigana = furiganaResult.map(item => [
+              item.text, 
+              item.furigana || ''
+            ]) as Array<[string, string]>
             console.log(`[Store] Furigana processed for caption: "${caption.text.substring(0, 30)}${caption.text.length > 30 ? '...' : ''}"`)
           } else {
             console.warn(`[Store] No furigana generated for caption: "${caption.text.substring(0, 30)}${caption.text.length > 30 ? '...' : ''}"`)

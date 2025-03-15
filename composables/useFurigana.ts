@@ -1,99 +1,118 @@
 import { ref } from 'vue'
 
+// Maximum cache size to prevent memory leaks
+const MAX_CACHE_SIZE = 1000
+
+// Constants for retry mechanism
+const MAX_RETRIES = 3
+const RETRY_DELAY = 1000
+
+// State variables
+const isProcessing = ref(false)
+const error = ref<string | null>(null)
+const cache = ref<Map<string, Array<{ text: string; furigana?: string }>>>(new Map())
+
+/**
+ * Composable for processing furigana
+ * @returns Functions and state for furigana processing
+ */
 export function useFurigana() {
-  const isProcessing = ref(false)
-  const error = ref<string | null>(null)
-  const cache = new Map<string, Array<[string, string]>>()
-  const MAX_CACHE_SIZE = 1000
-  const MAX_RETRY_COUNT = 3
-  const RETRY_DELAY = 1000
-
-  // Simple LRU cache implementation
-  function addToCache(key: string, value: Array<[string, string]>) {
-    if (cache.size >= MAX_CACHE_SIZE) {
-      // Remove oldest entry if cache is full
-      const firstKey = cache.keys().next().value
-      if (firstKey !== undefined) {
-        cache.delete(firstKey)
-      }
-    }
-    cache.set(key, value)
-  }
-
-  async function processFurigana(text: string, retryCount = 0): Promise<Array<[string, string]>> {
-    if (!text || text.trim() === '') {
-      return [[text, '']]
+  /**
+   * Process text to add furigana
+   * @param text The text to process
+   * @param skipCache Whether to skip the cache and force a new request
+   * @returns Array of objects with text and furigana
+   */
+  async function processFurigana(
+    text: string,
+    skipCache = false,
+    retryCount = 0
+  ): Promise<Array<{ text: string; furigana?: string }>> {
+    // Validate input
+    if (!text || typeof text !== 'string' || text.trim() === '') {
+      console.warn('[useFurigana] Empty text provided to processFurigana')
+      return [{ text: '' }]
     }
 
-    // Check cache first
-    if (cache.has(text)) {
-      console.log(`[Client] Using cached furigana for: "${text.substring(0, 30)}${text.length > 30 ? '...' : ''}"`)
-      return cache.get(text)!
-    }
-
-    isProcessing.value = true
+    // Reset error state
     error.value = null
 
+    // Check cache first if not skipping
+    if (!skipCache && cache.value.has(text)) {
+      console.log('[useFurigana] Using cached furigana result')
+      const cachedResult = cache.value.get(text)
+      if (cachedResult && cachedResult.length > 0) {
+        return cachedResult
+      }
+    }
+
     try {
-      console.log(`[Client] Requesting furigana for: "${text.substring(0, 30)}${text.length > 30 ? '...' : ''}"`)
+      // Set processing state
+      isProcessing.value = true
+
+      console.log(`[useFurigana] Processing text: "${text.substring(0, 30)}${text.length > 30 ? '...' : ''}"`)
       
-      const response = await fetch('/api/furigana', {
+      // Make API request
+      const response = await $fetch('/api/furigana', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ text }),
+        body: { text },
+        retry: 2,
+        retryDelay: 500,
+        timeout: 10000
       })
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => null)
-        const errorMessage = errorData?.message || `Failed to process furigana (${response.status})`
-        
-        // Retry logic for server errors
-        if (response.status >= 500 && retryCount < MAX_RETRY_COUNT) {
-          console.warn(`[Client] Server error, retrying (${retryCount + 1}/${MAX_RETRY_COUNT})...`)
-          await new Promise(resolve => setTimeout(resolve, RETRY_DELAY))
-          return processFurigana(text, retryCount + 1)
-        }
-        
-        throw new Error(errorMessage)
+      // Validate response
+      if (!response || !Array.isArray(response)) {
+        throw new Error('Invalid response from furigana API')
       }
 
-      const data = await response.json()
-      
-      if (!data.furigana || !Array.isArray(data.furigana)) {
-        console.error('[Client] Invalid furigana response:', data)
-        throw new Error('Invalid furigana response from server')
-      }
-      
-      console.log(`[Client] Received furigana: ${JSON.stringify(data.furigana)}`)
-      
       // Cache the result
-      addToCache(text, data.furigana)
-      
-      return data.furigana
-    } catch (e) {
-      console.error('[Client] Error processing furigana:', e)
-      error.value = e instanceof Error ? e.message : 'Error processing furigana'
-      
-      // Return a simple fallback
-      const fallback: Array<[string, string]> = [[text, '']]
-      return fallback
+      if (response.length > 0) {
+        // Manage cache size
+        if (cache.value.size >= MAX_CACHE_SIZE) {
+          // Remove oldest entry (first key)
+          const firstKey = cache.value.keys().next().value
+          if (firstKey) {
+            cache.value.delete(firstKey)
+          }
+        }
+        
+        cache.value.set(text, response)
+      }
+
+      console.log(`[useFurigana] Processing successful, received ${response.length} tokens`)
+      return response
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err)
+      console.error('[useFurigana] Error processing furigana:', errorMessage)
+      error.value = errorMessage
+
+      // Retry if we haven't reached the maximum retry count
+      if (retryCount < MAX_RETRIES) {
+        console.log(`[useFurigana] Retrying processFurigana (${retryCount + 1}/${MAX_RETRIES})...`)
+        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY))
+        return processFurigana(text, skipCache, retryCount + 1)
+      }
+
+      // Return the original text if all retries fail
+      return [{ text }]
     } finally {
       isProcessing.value = false
     }
   }
 
-  // Clear the cache
+  /**
+   * Clear the furigana cache
+   */
   function clearCache() {
-    cache.clear()
-    console.log('[Client] Furigana cache cleared')
+    console.log('[useFurigana] Clearing furigana cache')
+    cache.value.clear()
   }
 
   return {
     processFurigana,
+    clearCache,
     isProcessing,
-    error,
-    clearCache
+    error
   }
 } 

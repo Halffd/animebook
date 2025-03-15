@@ -1,197 +1,174 @@
-import type { Tokenizer, Token } from '~/types'
+import { analyzeKuromoji, initializeTokenizer as initializeKuromoji, isInitialized as isKuromojiInitialized } from './kuromoji'
 import { analyzeSudachi } from './sudachi'
+import type { Token } from '~/types'
 
-// Server-side kuromoji tokenizer
-let kuromojiTokenizer: any = null
-let kuromojiInitializing = false
-let kuromojiInitPromise: Promise<any> | null = null
+// Track initialization state and errors
+let isInitialized = false
+let isInitializing = false
+let initializationPromise: Promise<void> | null = null
+let initializationAttempts = 0
+const MAX_INIT_ATTEMPTS = 3
+const INIT_RETRY_DELAY = 2000
 
 // Default tokenization method
 let tokenizationMethod: 'kuromoji' | 'sudachi' = 'kuromoji'
 
-// Client-side declarations
-declare global {
-  interface Window {
-    kuromoji: {
-      builder: (options: { dicPath: string }) => {
-        build: (callback: (err: Error | null, tokenizer: any) => void) => void
-      }
-    }
-  }
-}
+// Track errors for better debugging
+let lastError: Error | null = null
+let consecutiveErrors = 0
+const MAX_CONSECUTIVE_ERRORS = 5
 
-// Create a simple tokenizer for fallback
-function createSimpleTokenizer(): Tokenizer {
-  return {
-    tokenize(text: string): Token[] {
-      console.log(`[Tokenizer] Using simple tokenizer for: "${text.substring(0, 30)}${text.length > 30 ? '...' : ''}"`)
-      return text.split(/(\s+)/).filter(Boolean).map(part => ({
-        surface_form: part,
-        basic_form: part,
-        reading: part,
-        pos: 'unknown'
-      }))
-    }
-  }
-}
+// Japanese text detection regex
+const JAPANESE_REGEX = /[\u3000-\u303f\u3040-\u309f\u30a0-\u30ff\uff00-\uff9f\u4e00-\u9faf\u3400-\u4dbf]/
 
-// Initialize server-side kuromoji
-async function initServerKuromoji(): Promise<any> {
-  if (kuromojiTokenizer) return kuromojiTokenizer
-  if (kuromojiInitPromise) return kuromojiInitPromise
-
-  console.log('[Server] Initializing Kuromoji tokenizer...')
-  
-  kuromojiInitializing = true
-  kuromojiInitPromise = new Promise((resolve, reject) => {
-    try {
-      // In ESM context, we need to use dynamic import
-      import('kuromoji').then((kuromojiModule) => {
-        // Use the npm kuromoji package
-        const dicPath = 'node_modules/kuromoji/dict'
-        
-        console.log('[Server] Building kuromoji tokenizer with dictionary path:', dicPath)
-        kuromojiModule.default.builder({ dicPath }).build((err: Error | null, tokenizer: any) => {
-          if (err) {
-            console.error('[Server] Kuromoji initialization error:', err)
-            kuromojiInitializing = false
-            reject(err)
-            return
-          }
-          
-          console.log('[Server] Kuromoji tokenizer initialized successfully')
-          kuromojiTokenizer = tokenizer
-          kuromojiInitializing = false
-          resolve(tokenizer)
-        })
-      }).catch(error => {
-        console.error('[Server] Failed to import kuromoji module:', error)
-        kuromojiInitializing = false
-        reject(error)
-      })
-    } catch (error) {
-      console.error('[Server] Error during Kuromoji initialization:', error)
-      kuromojiInitializing = false
-      reject(error)
-    }
-  })
-  
-  return kuromojiInitPromise.catch(error => {
-    console.error('[Server] Failed to initialize kuromoji, using simple tokenizer:', error)
-    return createSimpleTokenizer()
-  })
-}
-
-// Initialize client-side kuromoji
-async function initClientKuromoji(): Promise<Tokenizer> {
-  if (kuromojiTokenizer) return kuromojiTokenizer
-
-  return new Promise((resolve) => {
-    try {
-      const kuromoji = window.kuromoji
-      if (!kuromoji) {
-        console.warn('[Client] Kuromoji is not loaded, using simple tokenizer')
-        resolve(createSimpleTokenizer())
-        return
-      }
-
-      kuromoji.builder({ dicPath: '/dict' }).build((err: Error | null, t: Tokenizer) => {
-        if (err) {
-          console.error('[Client] Failed to initialize Kuromoji:', err)
-          resolve(createSimpleTokenizer())
-          return
-        }
-        kuromojiTokenizer = t
-        resolve(t)
-      })
-    } catch (error) {
-      console.error('[Client] Error during Kuromoji initialization:', error)
-      resolve(createSimpleTokenizer())
-    }
-  })
-}
-
-// Initialize the appropriate tokenizer based on environment
-export async function initializeTokenizer(): Promise<Tokenizer> {
-  if (process.server) {
-    try {
-      const tokenizer = await initServerKuromoji()
-      return {
-        tokenize(text: string): Token[] {
-          try {
-            console.log(`[Server] Tokenizing with Kuromoji: "${text.substring(0, 30)}${text.length > 30 ? '...' : ''}"`)
-            const tokens = tokenizer.tokenize(text)
-            return tokens.map((t: any) => ({
-              surface_form: t.surface_form,
-              basic_form: t.basic_form || t.surface_form,
-              reading: t.reading || t.surface_form,
-              pos: t.pos || 'unknown'
-            }))
-          } catch (error) {
-            console.error('[Server] Kuromoji tokenization error:', error)
-            return createSimpleTokenizer().tokenize(text)
-          }
-        }
-      }
-    } catch (error) {
-      console.error('[Server] Failed to initialize server tokenizer:', error)
-      return createSimpleTokenizer()
-    }
-  } else {
-    return initClientKuromoji()
-  }
+export function getTokenizationMethod() {
+  return tokenizationMethod
 }
 
 export function setTokenizationMethod(method: 'kuromoji' | 'sudachi') {
-  console.log(`[Tokenizer] Setting tokenization method to: ${method}`)
+  console.log(`[Tokenizer] Setting tokenization method to ${method}`)
   tokenizationMethod = method
 }
 
-export async function tokenize(text: string): Promise<Token[]> {
+export async function initializeTokenizer(): Promise<void> {
+  // If already initialized, return
+  if (isInitialized) {
+    return
+  }
+
+  // If initialization is in progress, return the existing promise
+  if (isInitializing && initializationPromise) {
+    return initializationPromise
+  }
+
+  // Start initialization
+  isInitializing = true
+  initializationAttempts++
+  
+  console.log(`[Tokenizer] Initializing tokenizer (attempt ${initializationAttempts}/${MAX_INIT_ATTEMPTS})...`)
+  
+  initializationPromise = new Promise<void>(async (resolve, reject) => {
+    try {
+      // For server-side, initialize Kuromoji
+      if (process.server) {
+        console.log('[Tokenizer] Server-side initialization')
+        await initializeKuromoji()
+        isInitialized = true
+        isInitializing = false
+        consecutiveErrors = 0
+        lastError = null
+        console.log('[Tokenizer] Server-side initialization complete')
+        resolve()
+        return
+      }
+      
+      // For client-side, we don't need to initialize anything
+      console.log('[Tokenizer] Client-side initialization (no-op)')
+      isInitialized = true
+      isInitializing = false
+      consecutiveErrors = 0
+      lastError = null
+      resolve()
+    } catch (error) {
+      console.error('[Tokenizer] Initialization failed:', error)
+      isInitializing = false
+      lastError = error instanceof Error ? error : new Error(String(error))
+      consecutiveErrors++
+      
+      // If we haven't reached max attempts, retry after delay
+      if (initializationAttempts < MAX_INIT_ATTEMPTS) {
+        console.log(`[Tokenizer] Will retry initialization in ${INIT_RETRY_DELAY}ms`)
+        setTimeout(() => {
+          initializationPromise = null
+          initializeTokenizer().then(resolve).catch(reject)
+        }, INIT_RETRY_DELAY)
+        return
+      }
+      
+      reject(error)
+    }
+  })
+
+  return initializationPromise
+}
+
+function createSimpleToken(text: string): Token {
+  return {
+    surface_form: text,
+    basic_form: text,
+    reading: text,
+    pos: 'unknown'
+  }
+}
+
+// Simple tokenizer as fallback
+function simpleTokenize(text: string): Token[] {
+  console.log('[Tokenizer] Using simple tokenizer as fallback')
+  
+  // For Japanese text, try to split by characters for better results
+  if (JAPANESE_REGEX.test(text)) {
+    return Array.from(text).filter(char => char.trim() !== '').map(createSimpleToken)
+  }
+  
+  // For non-Japanese text, split by whitespace
+  return text.split(/(\s+)/).filter(Boolean).map(createSimpleToken)
+}
+
+export async function tokenize(text: string, retryCount = 0): Promise<Token[]> {
   // If text is empty or not a string, return empty array
   if (!text || typeof text !== 'string' || text.trim() === '') {
+    console.warn('[Tokenizer] Empty text provided to tokenize function')
     return []
   }
 
   try {
-    if (process.server) {
-      console.log(`[Server] Tokenizing text with ${tokenizationMethod}`)
-      if (tokenizationMethod === 'sudachi') {
-        try {
-          return await analyzeSudachi(text)
-        } catch (error) {
-          console.error('[Server] Sudachi tokenization failed, falling back to Kuromoji:', error)
-          const tokenizer = await initializeTokenizer()
-          return tokenizer.tokenize(text)
-        }
-      } else {
-        const tokenizer = await initializeTokenizer()
-        return tokenizer.tokenize(text)
-      }
+    // Ensure tokenizer is initialized
+    if (!isInitialized) {
+      console.log('[Tokenizer] Not initialized, initializing now...')
+      await initializeTokenizer()
+    }
+
+    // Use the selected tokenization method
+    if (tokenizationMethod === 'kuromoji') {
+      console.log('[Tokenizer] Using Kuromoji tokenizer')
+      return await analyzeKuromoji(text)
+    } else if (tokenizationMethod === 'sudachi') {
+      console.log('[Tokenizer] Using Sudachi tokenizer')
+      return await analyzeSudachi(text)
     } else {
-      // Client-side tokenization
-      if (tokenizationMethod === 'sudachi') {
-        try {
-          return await analyzeSudachi(text)
-        } catch (error) {
-          console.error('[Client] Sudachi tokenization failed:', error)
-          return createSimpleTokenizer().tokenize(text)
-        }
-      } else {
-        const tokenizer = await initClientKuromoji()
-        return tokenizer.tokenize(text)
-      }
+      console.warn(`[Tokenizer] Unknown tokenization method: ${tokenizationMethod}, falling back to simple tokenizer`)
+      return simpleTokenize(text)
     }
   } catch (error) {
-    console.error(`[${process.server ? 'Server' : 'Client'}] Tokenization failed:`, error)
-    return createSimpleTokenizer().tokenize(text)
+    console.error('[Tokenizer] Tokenization failed:', error)
+    lastError = error instanceof Error ? error : new Error(String(error))
+    consecutiveErrors++
+    
+    if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+      console.error(`[Tokenizer] ${MAX_CONSECUTIVE_ERRORS} consecutive errors occurred, resetting tokenizer`)
+      isInitialized = false
+      isInitializing = false
+      initializationPromise = null
+      initializationAttempts = 0
+    }
+    
+    // Retry if we haven't reached the maximum retry count
+    if (retryCount < 2) {
+      console.log(`[Tokenizer] Retrying tokenization (${retryCount + 1}/2)...`)
+      await new Promise(resolve => setTimeout(resolve, 1000))
+      return tokenize(text, retryCount + 1)
+    }
+    
+    // Use simple tokenizer as fallback
+    return simpleTokenize(text)
   }
 }
 
-export async function makeFurigana(text: string, mode = 'A'): Promise<Array<[string, string]>> {
+export async function makeFurigana(text: string, mode = 'A'): Promise<Array<{ text: string; furigana?: string }>> {
   // If text is empty or not a string, return simple array
   if (!text || typeof text !== 'string' || text.trim() === '') {
-    return [[text, '']]
+    console.warn('[Tokenizer] Empty text provided to makeFurigana function')
+    return [{ text }]
   }
 
   try {
@@ -199,8 +176,12 @@ export async function makeFurigana(text: string, mode = 'A'): Promise<Array<[str
     const tokens = await tokenize(text)
     
     if (!tokens || tokens.length === 0) {
-      console.warn(`[${process.server ? 'Server' : 'Client'}] No tokens generated for text`)
-      return [[text, '']]
+      console.warn(`[${process.server ? 'Server' : 'Client'}] No tokens generated for text, using simple fallback`)
+      // For Japanese text, try to split by characters as a last resort
+      if (/[\u3000-\u303f\u3040-\u309f\u30a0-\u30ff\uff00-\uff9f\u4e00-\u9faf\u3400-\u4dbf]/.test(text)) {
+        return Array.from(text).map(char => ({ text: char }))
+      }
+      return [{ text }]
     }
     
     console.log(`[${process.server ? 'Server' : 'Client'}] Tokens:`, JSON.stringify(tokens))
@@ -210,11 +191,14 @@ export async function makeFurigana(text: string, mode = 'A'): Promise<Array<[str
       const reading = token.reading || surface
       
       // Only return furigana if different from surface form
-      return [surface, reading !== surface ? reading : '']
+      return { 
+        text: surface, 
+        furigana: reading !== surface ? reading : undefined 
+      }
     })
   } catch (error) {
     console.error(`[${process.server ? 'Server' : 'Client'}] Failed to generate furigana:`, error)
     // Return simple furigana as fallback
-    return [[text, '']]
+    return [{ text }]
   }
 } 
