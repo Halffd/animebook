@@ -1,29 +1,41 @@
-import { initializeTokenizer } from '~/server/services/tokenizer'
+import { initializeTokenizer, makeFurigana } from '~/server/services/tokenizer'
+import type { H3Error } from 'h3'
 
 export default defineEventHandler(async (event) => {
   try {
     const body = await readBody(event)
     const { text } = body
 
-    if (!text) {
+    if (!text || typeof text !== 'string') {
       throw createError({
         statusCode: 400,
-        message: 'Text is required'
+        message: 'Text is required and must be a string'
       })
     }
 
-    const tokenizer = await initializeTokenizer()
-    const tokens = tokenizer.tokenize(text)
+    if (text.length > 1000) {
+      throw createError({
+        statusCode: 400,
+        message: 'Text is too long (maximum 1000 characters)'
+      })
+    }
 
-    const furigana = tokens.map(token => {
-      const surface = token.surface_form
-      const reading = token.reading || surface
-      return [surface, reading !== surface ? reading : '']
-    })
-
+    console.log(`[API] Processing furigana request for: "${text.substring(0, 30)}${text.length > 30 ? '...' : ''}"`)
+    
+    // Use makeFurigana directly instead of tokenizing manually
+    const furigana = await makeFurigana(text)
+    
+    console.log(`[API] Furigana generated successfully: ${JSON.stringify(furigana)}`)
+    
     return { furigana }
 
-  } catch (error) {
+  } catch (error: unknown) {
+    console.error('[API] Furigana API error:', error)
+    
+    if (error && typeof error === 'object' && 'statusCode' in error) {
+      throw error // Re-throw HTTP errors
+    }
+    
     throw createError({
       statusCode: 500,
       message: error instanceof Error ? error.message : 'Internal server error'

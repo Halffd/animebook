@@ -8,6 +8,7 @@ import { useVideoControls } from '~/composables/useVideoControls'
 import { useAnkiExport } from '~/composables/useAnkiExport'
 import { useAnkiExtension } from '~/composables/useAnkiExtension'
 import type { Caption } from '~/types'
+import { useRoute } from 'vue-router'
 
 const videoUrl = ref<string | null>(null)
 const error = ref<string | null>(null)
@@ -24,12 +25,17 @@ const currentAudioTrack = ref(0)
 const isExporting = computed(() => unref(ankiExport.isExporting))
 
 async function onFilesDrop(e: DragEvent) {
+  e.preventDefault()
   const files = e.dataTransfer?.files
   if (!files) return
+
+  let videoFound = false
+  let subtitlesFound = false
 
   for (const file of files) {
     if (file.type.startsWith('video/')) {
       videoUrl.value = URL.createObjectURL(file)
+      videoFound = true
       if (ankiExtension.isExtensionAvailable) {
         try {
           await ankiExtension.initializeWithVideo(file)
@@ -38,41 +44,70 @@ async function onFilesDrop(e: DragEvent) {
           videoControls.showNotification('Failed to initialize Anki export')
         }
       }
-    } else if (file.name.match(/\.(srt|vtt|ass)$/i)) {
-      await loadCaptionsFile(file)
+    } else if (file.name.toLowerCase().match(/\.(srt|vtt|ass)$/)) {
+      try {
+        const text = await file.text()
+        await captionsStore.loadCaptions(text)
+        subtitlesFound = true
+      } catch (e) {
+        error.value = e instanceof Error ? e.message : 'Error loading captions'
+        videoControls.showNotification('Failed to load subtitles')
+      }
     }
   }
-}
 
-async function loadCaptionsFile(file: File) {
-  try {
-    const text = await file.text()
-    await captionsStore.loadCaptions(text)
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Error loading captions'
+  if (videoFound) {
+    videoControls.showNotification('Video loaded')
+  }
+  
+  if (subtitlesFound) {
+    videoControls.showNotification(`Loaded ${captionsStore.subtitleTracks.length} subtitle track(s)`)
   }
 }
 
 // Load settings on mount
 onMounted(() => {
   settings.loadSettings()
+  
+  // Handle export action from sidebar
+  const route = useRoute()
+  if (route.query.action === 'export' && route.query.captionId) {
+    const captionId = route.query.captionId as string
+    const caption = captionsStore.captions.find(c => c.id === captionId)
+    if (caption) {
+      onExportToAnki(caption)
+    }
+  }
 })
 
 useKeyboardShortcuts({
   ' ': () => videoControls.togglePlay(),
-  'ArrowLeft': () => captionsStore.previousCaption(),
-  'ArrowRight': () => captionsStore.nextCaption(),
-  'a': () => {
-    captionsStore.toggleAutoPause()
-    videoControls.showNotification(`Auto-pause: ${captionsStore.isAutoPauseMode ? 'ON' : 'OFF'}`)
-  },
+  'x': () => captionsStore.toggleSidebar(),
   'v': () => {
     captionsStore.toggleSubtitles()
     videoControls.showNotification(`Subtitles: ${captionsStore.showSubtitles ? 'ON' : 'OFF'}`)
   },
-  'b': () => captionsStore.toggleSidebar(),
-  '?': () => showHelp.value = !showHelp.value,
+  'c': () => {
+    captionsStore.toggleSecondarySubtitles()
+    videoControls.showNotification(`Secondary Subtitles: ${captionsStore.showSecondarySubtitles ? 'ON' : 'OFF'}`)
+  },
+  'f': () => {
+    captionsStore.toggleFurigana()
+    videoControls.showNotification(`Furigana: ${captionsStore.showFurigana ? 'ON' : 'OFF'}`)
+  },
+  'ArrowLeft': () => captionsStore.previousCaption(),
+  'a': () => captionsStore.previousCaption(),
+  'ArrowRight': () => captionsStore.nextCaption(),
+  'd': () => captionsStore.nextCaption(),
+  'ArrowDown': () => captionsStore.seekToSubtitleStart(),
+  's': () => captionsStore.seekToSubtitleStart(),
+  'ArrowUp': () => captionsStore.toggleAutoPause(),
+  'w': () => captionsStore.toggleAutoPause(),
   't': () => videoPlayerRef.value?.cycleAudioTrack(),
+  'y': () => {
+    captionsStore.cycleActiveTrack()
+    videoControls.showNotification(`Subtitle Track: ${captionsStore.activeTrackIndex + 1}/${captionsStore.subtitleTracks.length}`)
+  },
   'm': () => videoPlayerRef.value?.adjustPlaybackRate(true),
   'n': () => videoPlayerRef.value?.adjustPlaybackRate(false),
   'PageUp': () => videoControls.skipTime(87), // Skip OP/ED
@@ -106,7 +141,8 @@ useKeyboardShortcuts({
     videoControls.showNotification(
       `Regex replacements: ${settings.regexReplacementsEnabled ? 'ON' : 'OFF'}`
     )
-  }
+  },
+  '?': () => showHelp.value = !showHelp.value
 })
 
 async function onExportToAnki(caption: Caption) {
@@ -158,7 +194,7 @@ const handleFileSelect = async (event: Event) => {
 
 <template>
   <div 
-    class="min-h-screen"
+    class="min-h-screen min-h-[100dvh] flex flex-col"
     @drop.prevent="onFilesDrop"
     @dragover.prevent
   >
@@ -172,13 +208,16 @@ const handleFileSelect = async (event: Event) => {
       @error="error = $event.message"
       @notify="videoControls.showNotification"
       @audio-track-change="onAudioTrackChange"
+      class="flex-1"
     />
 
-    <div v-else class="text-center p-8">
-      Drop video and subtitle files here
+    <div v-else class="flex-1 flex items-center justify-center">
+      <div class="text-center p-8 text-xl">
+        Drop video and subtitle files here
+      </div>
     </div>
 
-    <div v-if="error" class="text-red-500">
+    <div v-if="error" class="fixed top-4 left-4 text-red-500 bg-black/50 px-4 py-2 rounded z-40">
       {{ error }}
     </div>
 
@@ -192,7 +231,7 @@ const handleFileSelect = async (event: Event) => {
     />
 
     <button 
-      class="fixed top-4 right-4 p-2 bg-gray-800 text-white rounded"
+      class="fixed top-4 right-4 p-2 bg-gray-800 text-white rounded hover:bg-gray-700 z-40"
       @click="captionsStore.toggleSidebar"
     >
       Toggle Sidebar
@@ -204,7 +243,7 @@ const handleFileSelect = async (event: Event) => {
     />
 
     <button 
-      class="fixed bottom-4 right-4 p-2 bg-gray-800 text-white rounded"
+      class="fixed bottom-4 right-4 p-2 bg-gray-800 text-white rounded hover:bg-gray-700 z-40"
       @click="showHelp = true"
     >
       ?

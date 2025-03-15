@@ -18,14 +18,21 @@ const settings = useSettingsStore()
 const hotkeysList = [
   { key: 'Space', desc: 'Play/Pause' },
   { key: 'Left/Right', desc: 'Previous/Next subtitle' },
-  { key: 'Enter', desc: 'Replay current subtitle' },
-  { key: 'a', desc: 'Toggle auto-pause mode' },
+  { key: 'a/d', desc: 'Previous/Next subtitle' },
+  { key: 'Down/s', desc: 'Seek to subtitle start' },
+  { key: 'Up/w', desc: 'Toggle auto-pause mode' },
   { key: 'v', desc: 'Toggle subtitle visibility' },
-  { key: 'b', desc: 'Toggle sidebar' },
+  { key: 'c', desc: 'Toggle secondary subtitles' },
+  { key: 'f', desc: 'Toggle furigana' },
+  { key: 'x', desc: 'Toggle sidebar' },
+  { key: 't', desc: 'Cycle audio tracks' },
+  { key: 'y', desc: 'Cycle subtitle tracks' },
   { key: 'h', desc: 'Toggle regex replacements' },
   { key: '-/=', desc: 'Decrease/Increase subtitle size' },
   { key: 'PageUp/Down', desc: 'Jump 87 seconds (OP Skip)' },
-  { key: 'm/n', desc: 'Increase/Decrease playback speed' }
+  { key: 'm/n', desc: 'Increase/Decrease playback speed' },
+  { key: 'e', desc: 'Export current subtitle to Anki' },
+  { key: 'Shift+D', desc: 'Download subtitles' }
 ]
 
 function setActiveTab(tab: TabType) {
@@ -202,6 +209,9 @@ function setActiveTab(tab: TabType) {
               <li>Japanese subtitles will automatically get furigana readings</li>
               <li>Use auto-pause mode (a) to study line by line</li>
               <li>Adjust subtitle timing with the offset controls if needed</li>
+              <li>Multiple subtitle files can be loaded simultaneously</li>
+              <li>Use the 'y' key to cycle between loaded subtitle tracks</li>
+              <li>Subtitles from different tracks will be displayed stacked</li>
             </ul>
           </div>
         </div>

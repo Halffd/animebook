@@ -225,31 +225,45 @@ defineExpose({
     <!-- Audio track indicator -->
     <div 
       v-if="audioTracks.length > 1"
-      class="absolute top-2 right-2 bg-black/50 px-2 py-1 rounded text-white text-sm"
+      class="fixed top-4 right-4 bg-black/50 px-3 py-2 rounded text-white text-sm z-40"
     >
       Audio: {{ selectedAudioTrack + 1 }}/{{ audioTracks.length }}
     </div>
 
-    <!-- Current subtitle overlay -->
+    <!-- Subtitle tracks indicator -->
+    <div 
+      v-if="store.subtitleTracks.length > 1"
+      class="fixed top-12 right-4 bg-black/50 px-3 py-2 rounded text-white text-sm z-40"
+    >
+      <div>Subtitles: {{ store.activeTrackIndex + 1 }}/{{ store.subtitleTracks.length }}</div>
+      <div v-if="store.activeTrack?.metadata" class="text-xs mt-1">
+        {{ store.activeTrack.metadata.language }}: {{ store.activeTrack.metadata.title }}
+      </div>
+    </div>
+
+    <!-- All subtitle tracks -->
     <div 
       v-if="hasSubtitles"
       class="subtitles-container"
       :style="{
-        fontSize: `calc(${settings.subtitleFontSize} * 2rem)`
+        fontSize: `calc(${settings.subtitleFontSize} * 1.5rem)`
       }"
     >
       <div
-        v-for="caption in store.activeCaptions"
+        v-for="caption in store.allActiveCaptions"
         :key="caption.id"
         :class="[
           'subtitle-line',
-          `lane-${caption.lane}`
+          `lane-${caption.lane || 0}`,
+          { 'primary-track': store.activeCaptionIds.includes(caption.id) },
+          { 'secondary-track': !store.activeCaptionIds.includes(caption.id) && store.showSecondarySubtitles }
         ]"
+        v-show="store.activeCaptionIds.includes(caption.id) || store.showSecondarySubtitles"
       >
-        <template v-if="caption.furigana">
+        <template v-if="caption.furigana && store.showFurigana">
           <Furigana
-            v-for="[text, reading] in caption.furigana"
-            :key="`${caption.id}-${text}`"
+            v-for="([text, reading], index) in caption.furigana"
+            :key="`${caption.id}-${index}-${text}`"
             :text="processText(text)"
             :reading="reading"
           />
@@ -263,33 +277,98 @@ defineExpose({
 </template>
 
 <style scoped>
+.video-container {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: black;
+  overflow: hidden;
+}
+
+.video-element {
+  width: 100%;
+  height: auto;
+  max-height: calc(100vh - 20vh);
+  max-height: calc(100dvh - 20vh);
+  object-fit: contain;
+}
+
 .subtitles-container {
-  position: absolute;
-  bottom: 8vh;
-  left: 0;
-  right: 0;
+  position: fixed;
+  bottom: 10vh;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 90%;
+  max-width: 1200px;
   display: flex;
   flex-direction: column;
   align-items: center;
+  pointer-events: none;
+  z-index: 30;
 }
 
 .subtitle-line {
   position: relative;
   text-align: center;
   color: white;
-  font-size: 2rem;
+  font-size: 1.5rem;
+  line-height: 1.4;
   text-shadow: 
     0 0 5px rgba(0,0,0,0.8),
     0 0 10px rgba(0,0,0,0.5);
   padding: 0.2em;
+  background: transparent;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.primary-track {
+  color: white;
+}
+
+.secondary-track {
+  color: #ffeb3b; /* Yellow color for secondary tracks */
+  font-size: 1.2rem;
 }
 
 .lane-0 { transform: translateY(0); }
-.lane-1 { transform: translateY(-100%); }
-.lane-2 { transform: translateY(-200%); }
-.lane-3 { transform: translateY(-300%); }
+.lane-1 { transform: translateY(-120%); }
+.lane-2 { transform: translateY(-240%); }
+.lane-3 { transform: translateY(-360%); }
+
+/* Video alignment classes */
+.video-container.left {
+  justify-content: flex-start;
+}
+
+.video-container.center {
+  justify-content: center;
+}
+
+.video-container.right {
+  justify-content: flex-end;
+}
 
 .has-subtitles .video-element {
-  margin-bottom: 20vh; /* Make room for subtitles */
+  margin-bottom: 20vh;
+}
+
+@media (max-width: 768px) {
+  .subtitles-container {
+    font-size: calc(1rem * var(--subtitle-scale, 1));
+    bottom: 5vh;
+  }
+
+  .subtitle-line {
+    font-size: 1.2rem;
+  }
+
+  .secondary-track {
+    font-size: 1rem;
+  }
 }
 </style> 

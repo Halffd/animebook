@@ -1,23 +1,56 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { Caption } from '~/types'
+import type { Caption, SubtitleTrack } from '~/types'
 import { makeFurigana } from '~/server/services/tokenizer'
 import { useFurigana } from '~/composables/useFurigana'
 
 export const useCaptionsStore = defineStore('captions', () => {
-  const captions = ref<Caption[]>([])
+  // Multiple subtitle tracks support
+  const subtitleTracks = ref<SubtitleTrack[]>([])
+  const activeTrackIndex = ref(0)
+  
+  // Computed property for the active track
+  const activeTrack = computed(() => subtitleTracks.value[activeTrackIndex.value])
+  
+  // Original single track references (now points to active track)
+  const captions = computed(() => activeTrack.value?.captions || [])
+  
   const activeCaptionIds = ref<string[]>([])
   const isOffsetMode = ref(false)
   const isAutoPauseMode = ref(false)
   const lastPauseTime = ref<number | null>(null)
   const currentTime = ref(0)
   const showSubtitles = ref(true)
+  const showSecondarySubtitles = ref(true)
+  const showFurigana = ref(true)
   const isSidebarVisible = ref(true)
 
   const activeCaptions = computed(() => {
     return captions.value.filter(caption => 
       activeCaptionIds.value.includes(caption.id)
     )
+  })
+
+  // Get active captions from all tracks
+  const allActiveCaptions = computed(() => {
+    const active: Caption[] = []
+    
+    subtitleTracks.value.forEach((track, index) => {
+      // For the active track, use the activeCaptionIds filter
+      if (index === activeTrackIndex.value) {
+        active.push(...track.captions.filter(caption => 
+          activeCaptionIds.value.includes(caption.id)
+        ))
+      } else if (showSecondarySubtitles.value) {
+        // For other tracks, find captions that would be active at current time
+        active.push(...track.captions.filter(caption => 
+          caption.startTime <= currentTime.value && 
+          currentTime.value <= caption.endTime
+        ))
+      }
+    })
+    
+    return active
   })
 
   function parseSRT(content: string): Caption[] {
@@ -98,25 +131,25 @@ export const useCaptionsStore = defineStore('captions', () => {
   }
 
   function parseCaptions(fileContent: string): Caption[] | null {
-    // Try parsing as VTT first
+      // Try parsing as VTT first
     let parsed = parseVTT(fileContent)
-    if (!parsed) {
-      // Try ASS format
+      if (!parsed) {
+        // Try ASS format
       parsed = parseASS(fileContent)
-    }
-    if (!parsed) {
-      // Try SRT format
+      }
+      if (!parsed) {
+        // Try SRT format
       parsed = parseSRT(fileContent)
-    }
-    
-    if (!parsed) return null
+      }
+      
+      if (!parsed) return null
 
-    // Sort and process captions
+      // Sort and process captions
     sortCaptionsByTime(parsed)
     mergeDuplicates(parsed)
     assignCaptionsToLanes(parsed)
 
-    return parsed
+      return parsed
   }
 
   function timeToSeconds(timeStr: string): number {
@@ -130,55 +163,112 @@ export const useCaptionsStore = defineStore('captions', () => {
   }
 
   function sortCaptionsByTime(captions: Caption[]) {
-    captions.sort((a, b) => {
-      if (a.startTime === b.startTime) {
-        return a.endTime > b.endTime ? 1 : -1
-      }
-      return a.startTime > b.startTime ? 1 : -1
-    })
+      captions.sort((a, b) => {
+        if (a.startTime === b.startTime) {
+          return a.endTime > b.endTime ? 1 : -1
+        }
+        return a.startTime > b.startTime ? 1 : -1
+      })
   }
 
   function mergeDuplicates(captions: Caption[]) {
-    const duplicateIndexes: number[] = []
-    
-    for (let i = 0; i < captions.length - 1; i++) {
-      const caption = captions[i]
-      const nextCaption = captions[i + 1]
+      const duplicateIndexes: number[] = []
       
+      for (let i = 0; i < captions.length - 1; i++) {
+        const caption = captions[i]
+        const nextCaption = captions[i + 1]
+        
       if (caption.text === nextCaption.text && isOverlapping(caption, nextCaption)) {
-        nextCaption.startTime = Math.min(caption.startTime, nextCaption.startTime)
-        nextCaption.endTime = Math.max(caption.endTime, nextCaption.endTime)
-        duplicateIndexes.push(i)
+          nextCaption.startTime = Math.min(caption.startTime, nextCaption.startTime)
+          nextCaption.endTime = Math.max(caption.endTime, nextCaption.endTime)
+          duplicateIndexes.push(i)
+        }
       }
-    }
 
-    // Remove duplicates from end to start to avoid index shifting
-    for (let i = duplicateIndexes.length - 1; i >= 0; i--) {
-      captions.splice(duplicateIndexes[i], 1)
-    }
+      // Remove duplicates from end to start to avoid index shifting
+      for (let i = duplicateIndexes.length - 1; i >= 0; i--) {
+        captions.splice(duplicateIndexes[i], 1)
+      }
   }
 
   function isOverlapping(left: Caption, right: Caption): boolean {
     const containedDuration = right.endTime - left.startTime
-    const rightDuration = right.endTime - right.startTime
-    return containedDuration > 0.2 || (containedDuration / rightDuration) > 0.3
+      const rightDuration = right.endTime - right.startTime
+      return containedDuration > 0.2 || (containedDuration / rightDuration) > 0.3
   }
 
-  async function loadCaptions(fileContent: string) {
+  async function loadCaptions(fileContent: string, language?: string, title?: string) {
     const parsed = parseCaptions(fileContent)
-    if (!parsed) return
+      if (!parsed) return
 
-    const { processFurigana } = useFurigana()
+      const { processFurigana } = useFurigana()
 
-    // Process furigana for each caption
-    for (const caption of parsed) {
-      const furigana = await processFurigana(caption.text)
-      if (furigana) {
-        caption.furigana = furigana
-      }
+    console.log(`[Store] Processing furigana for ${parsed.length} captions`)
+    
+    // Add metadata to track
+    const trackInfo = {
+      language: language || 'unknown',
+      title: title || `Track ${subtitleTracks.value.length + 1}`
     }
 
-    captions.value = parsed
+      // Process furigana for each caption
+    const processingPromises = parsed.map(async (caption) => {
+      try {
+        // Only process furigana for Japanese text
+        if (language === 'jpn' || language === 'ja' || !language) {
+        const furigana = await processFurigana(caption.text)
+          if (furigana && furigana.length > 0) {
+          caption.furigana = furigana
+            console.log(`[Store] Furigana processed for caption: "${caption.text.substring(0, 30)}${caption.text.length > 30 ? '...' : ''}"`)
+          } else {
+            console.warn(`[Store] No furigana generated for caption: "${caption.text.substring(0, 30)}${caption.text.length > 30 ? '...' : ''}"`)
+          }
+        }
+      } catch (error) {
+        console.error(`[Store] Error processing furigana for caption: "${caption.text.substring(0, 30)}${caption.text.length > 30 ? '...' : ''}"`, error)
+      }
+    })
+    
+    // Wait for all furigana processing to complete
+    await Promise.all(processingPromises)
+    
+    console.log(`[Store] Furigana processing completed for all captions`)
+
+    // Add as a new track with metadata
+    subtitleTracks.value.push({
+      captions: parsed,
+      metadata: trackInfo
+    })
+    
+    // Set as active track if it's the first one
+    if (subtitleTracks.value.length === 1) {
+      activeTrackIndex.value = 0
+    }
+    
+    return subtitleTracks.value.length - 1 // Return the index of the newly added track
+  }
+
+  // Clear all subtitle tracks
+  function clearCaptions() {
+    subtitleTracks.value = []
+    activeTrackIndex.value = 0
+    activeCaptionIds.value = []
+  }
+
+  // Switch active track
+  function setActiveTrack(index: number) {
+    if (index >= 0 && index < subtitleTracks.value.length) {
+      activeTrackIndex.value = index
+      updateActiveCaptions()
+    }
+  }
+
+  // Cycle through available tracks
+  function cycleActiveTrack() {
+    if (subtitleTracks.value.length <= 1) return
+    
+    activeTrackIndex.value = (activeTrackIndex.value + 1) % subtitleTracks.value.length
+    updateActiveCaptions()
   }
 
   function setCurrentTime(time: number) {
@@ -187,27 +277,29 @@ export const useCaptionsStore = defineStore('captions', () => {
   }
 
   function updateActiveCaptions() {
-    const active = captions.value.filter(caption => 
+    // Update active captions for the current active track
+    const active = activeTrack.value?.captions.filter(caption => 
       caption.startTime <= currentTime.value && 
       currentTime.value <= caption.endTime
-    )
+    ) || []
+    
     activeCaptionIds.value = active.map(c => c.id)
   }
 
   function previousCaption() {
     const currentCaption = activeCaptions.value[0]
-    if (!currentCaption) return
-    
+      if (!currentCaption) return
+      
     const index = captions.value.findIndex(c => c.id === currentCaption.id)
-    if (index > 0) {
+      if (index > 0) {
       playCaption(captions.value[index - 1])
     }
-  }
+      }
 
   function nextCaption() {
     const currentCaption = activeCaptions.value[activeCaptions.value.length - 1]
-    if (!currentCaption) return
-    
+      if (!currentCaption) return
+      
     const index = captions.value.findIndex(c => c.id === currentCaption.id)
     if (index < captions.value.length - 1) {
       playCaption(captions.value[index + 1])
@@ -228,6 +320,14 @@ export const useCaptionsStore = defineStore('captions', () => {
     showSubtitles.value = !showSubtitles.value
   }
 
+  function toggleSecondarySubtitles() {
+    showSecondarySubtitles.value = !showSecondarySubtitles.value
+  }
+
+  function toggleFurigana() {
+    showFurigana.value = !showFurigana.value
+  }
+
   function toggleSidebar() {
     isSidebarVisible.value = !isSidebarVisible.value
   }
@@ -236,54 +336,59 @@ export const useCaptionsStore = defineStore('captions', () => {
     isOffsetMode.value = !isOffsetMode.value
   }
 
+  function seekToSubtitleStart() {
+    if (!activeCaptions.value.length) return
+    setCurrentTime(activeCaptions.value[0].startTime)
+  }
+
   function assignCaptionsToLanes(captions: Caption[]) {
-    for (let i = 0; i < captions.length; i++) {
-      const caption = captions[i]
+      for (let i = 0; i < captions.length; i++) {
+        const caption = captions[i]
       const previousCaptions = findPreviousCaptions(captions, i)
 
-      // Find available lane
-      const takenLanes = previousCaptions
+        // Find available lane
+        const takenLanes = previousCaptions
         .filter(prev => isOverlapping(prev, caption))
-        .map(c => c.lane)
-        .filter((lane): lane is number => lane !== undefined)
+          .map(c => c.lane)
+          .filter((lane): lane is number => lane !== undefined)
 
-      // Assign first available lane
-      for (let lane = 0; lane < takenLanes.length + 1; lane++) {
-        if (!takenLanes.includes(lane)) {
-          caption.lane = lane
-          break
+        // Assign first available lane
+        for (let lane = 0; lane < takenLanes.length + 1; lane++) {
+          if (!takenLanes.includes(lane)) {
+            caption.lane = lane
+            break
+          }
+        }
+
+        if (caption.lane === undefined) {
+          caption.lane = 0
         }
       }
-
-      if (caption.lane === undefined) {
-        caption.lane = 0
-      }
-    }
   }
 
   function findPreviousCaptions(captions: Caption[], currentIndex: number): Caption[] {
-    const previousCaptions: Caption[] = []
-    const previousLanes = new Set<number>()
-    const maxLookBehind = 5
-    let misses = 0
+      const previousCaptions: Caption[] = []
+      const previousLanes = new Set<number>()
+      const maxLookBehind = 5
+      let misses = 0
 
-    for (let i = currentIndex - 1; i >= 0; i--) {
-      const prevCaption = captions[i]
-      if (prevCaption.lane !== undefined && previousLanes.has(prevCaption.lane)) {
-        misses++
-        if (misses > maxLookBehind) break
-        continue
+      for (let i = currentIndex - 1; i >= 0; i--) {
+        const prevCaption = captions[i]
+        if (prevCaption.lane !== undefined && previousLanes.has(prevCaption.lane)) {
+          misses++
+          if (misses > maxLookBehind) break
+          continue
+        }
+
+        previousCaptions.push(prevCaption)
+        if (prevCaption.lane !== undefined) {
+          previousLanes.add(prevCaption.lane)
+        }
       }
 
-      previousCaptions.push(prevCaption)
-      if (prevCaption.lane !== undefined) {
-        previousLanes.add(prevCaption.lane)
-      }
-    }
-
-    return previousCaptions.sort((a, b) => 
-      (a.lane ?? 0) - (b.lane ?? 0)
-    )
+      return previousCaptions.sort((a, b) => 
+        (a.lane ?? 0) - (b.lane ?? 0)
+      )
   }
 
   function downloadSubtitles() {
@@ -292,41 +397,50 @@ export const useCaptionsStore = defineStore('captions', () => {
     const srtContent = captions.value.map((caption, index) => {
       const startTime = formatSrtTime(caption.startTime)
       const endTime = formatSrtTime(caption.endTime)
-      return `${index + 1}\n${startTime} --> ${endTime}\n${caption.text}\n`
-    }).join('\n')
+        return `${index + 1}\n${startTime} --> ${endTime}\n${caption.text}\n`
+      }).join('\n')
 
-    const blob = new Blob([srtContent], { type: 'text/plain' })
-    const url = URL.createObjectURL(blob)
-    
-    const a = document.createElement('a')
-    a.href = url
-    a.download = 'subtitles.srt'
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-    URL.revokeObjectURL(url)
+      const blob = new Blob([srtContent], { type: 'text/plain' })
+      const url = URL.createObjectURL(blob)
+      
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'subtitles.srt'
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
   }
 
   function formatSrtTime(seconds: number): string {
-    const pad = (n: number) => n.toString().padStart(2, '0')
-    const hours = Math.floor(seconds / 3600)
-    const minutes = Math.floor((seconds % 3600) / 60)
-    const secs = Math.floor(seconds % 60)
-    const ms = Math.floor((seconds % 1) * 1000)
-    return `${pad(hours)}:${pad(minutes)}:${pad(secs)},${pad(ms)}`
-  }
+      const pad = (n: number) => n.toString().padStart(2, '0')
+      const hours = Math.floor(seconds / 3600)
+      const minutes = Math.floor((seconds % 3600) / 60)
+      const secs = Math.floor(seconds % 60)
+      const ms = Math.floor((seconds % 1) * 1000)
+      return `${pad(hours)}:${pad(minutes)}:${pad(secs)},${pad(ms)}`
+    }
 
   return {
     captions,
+    subtitleTracks,
+    activeTrackIndex,
+    activeTrack,
     activeCaptionIds,
     activeCaptions,
+    allActiveCaptions,
     isOffsetMode,
     isAutoPauseMode,
     lastPauseTime,
     currentTime,
     showSubtitles,
+    showSecondarySubtitles,
+    showFurigana,
     isSidebarVisible,
     loadCaptions,
+    clearCaptions,
+    setActiveTrack,
+    cycleActiveTrack,
     setCurrentTime,
     updateActiveCaptions,
     previousCaption,
@@ -334,8 +448,11 @@ export const useCaptionsStore = defineStore('captions', () => {
     playCaption,
     toggleAutoPause,
     toggleSubtitles,
+    toggleSecondarySubtitles,
+    toggleFurigana,
     toggleSidebar,
     toggleOffsetMode,
+    seekToSubtitleStart,
     assignCaptionsToLanes,
     findPreviousCaptions,
     downloadSubtitles,

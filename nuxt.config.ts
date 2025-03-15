@@ -9,11 +9,41 @@ export default defineNuxtConfig({
 
   typescript: {
     strict: true,
-    typeCheck: true
+    typeCheck: true,
+    tsConfig: {
+      compilerOptions: {
+        experimentalDecorators: true
+      }
+    }
   },
 
-  // Move any Vite config here
   vite: {
-    // Your vite config options
+    vue: {
+      template: {
+        compilerOptions: {
+          isCustomElement: (tag) => tag.includes('-')
+        }
+      }
+    },
+    optimizeDeps: {
+      exclude: ['fsevents']
+    },
+    build: {
+      target: 'esnext',
+      minify: 'esbuild'
+    }
+  },
+
+  imports: {
+    autoImport: true,
+    dirs: ['composables/**']
+  },
+
+  app: {
+    head: {
+      htmlAttrs: {
+        lang: 'en'
+      }
+    }
   }
 })

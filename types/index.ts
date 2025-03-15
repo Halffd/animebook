@@ -21,6 +21,14 @@ export interface Caption {
   minCustomOffset?: number | null
 }
 
+export interface SubtitleTrack {
+  captions: Caption[]
+  metadata: {
+    language: string
+    title: string
+  }
+}
+
 export interface CaptionsState {
   captions: Caption[]
   currentTime: number
