@@ -13,6 +13,7 @@ interface Settings {
   regexReplacements: RegexReplacement[]
   regexReplacementsEnabled: boolean
   tokenizationMethod: 'kuromoji' | 'sudachi'
+  colorizeWords: boolean
 }
 
 export const useSettingsStore = defineStore('settings', {
@@ -26,7 +27,8 @@ export const useSettingsStore = defineStore('settings', {
       { regex: '（.*?）', replaceText: '' }
     ],
     regexReplacementsEnabled: true,
-    tokenizationMethod: 'kuromoji'
+    tokenizationMethod: 'kuromoji',
+    colorizeWords: false
   }),
 
   actions: {

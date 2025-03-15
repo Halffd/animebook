@@ -17,7 +17,11 @@ const captionsStore = useCaptionsStore()
 const showHelp = ref(false)
 const settings = useSettingsStore()
 const videoControls = useVideoControls()
-const videoPlayerRef = ref<{ cycleAudioTrack: () => void; adjustPlaybackRate: (increase: boolean) => void } | null>(null)
+const videoPlayerRef = ref<{ 
+  cycleAudioTrack: () => void; 
+  adjustPlaybackRate: (increase: boolean) => void;
+  toggleSubtitleInfo: () => void;
+} | null>(null)
 const ankiExport = useAnkiExport()
 const ankiExtension = useAnkiExtension()
 const currentAudioTrack = ref(0)
@@ -31,7 +35,9 @@ async function onFilesDrop(e: DragEvent) {
 
   let videoFound = false
   let subtitlesFound = false
+  const subtitleFiles = []
 
+  // First, process the video file if present
   for (const file of files) {
     if (file.type.startsWith('video/')) {
       videoUrl.value = URL.createObjectURL(file)
@@ -44,11 +50,51 @@ async function onFilesDrop(e: DragEvent) {
           videoControls.showNotification('Failed to initialize Anki export')
         }
       }
-    } else if (file.name.toLowerCase().match(/\.(srt|vtt|ass)$/)) {
+      break // Only load one video
+    }
+  }
+
+  // Then process subtitle files
+  for (const file of files) {
+    if (file.name.toLowerCase().match(/\.(srt|vtt|ass)$/)) {
+      subtitleFiles.push(file)
+    }
+  }
+
+  // Process subtitle files
+  if (subtitleFiles.length > 0) {
+    // Clear existing subtitles if user is loading a new set
+    if (videoFound) {
+      captionsStore.clearCaptions()
+    }
+
+    for (const file of subtitleFiles) {
       try {
+        // Try to extract language and title from filename
+        // Format: filename_language_title.ext or filename.language.ext
+        const filenameParts = file.name.split('.')
+        const extension = filenameParts.pop()?.toLowerCase()
+        let nameParts = filenameParts.join('.').split('_')
+        
+        let language = 'unknown'
+        let title = file.name
+        
+        if (nameParts.length >= 3) {
+          // Assume format is filename_language_title
+          language = nameParts[nameParts.length - 2]
+          title = nameParts[nameParts.length - 1]
+        } else if (filenameParts.length >= 2) {
+          // Try format filename.language.ext
+          language = filenameParts[filenameParts.length - 1]
+          title = filenameParts[0]
+        }
+        
         const text = await file.text()
-        await captionsStore.loadCaptions(text)
-        subtitlesFound = true
+        const trackIndex = await captionsStore.loadCaptions(text, language, title)
+        
+        if (trackIndex !== undefined) {
+          subtitlesFound = true
+        }
       } catch (e) {
         error.value = e instanceof Error ? e.message : 'Error loading captions'
         videoControls.showNotification('Failed to load subtitles')
@@ -113,6 +159,12 @@ useKeyboardShortcuts({
   's': () => captionsStore.seekToSubtitleStart(),
   'ArrowUp': () => captionsStore.toggleAutoPause(),
   'w': () => captionsStore.toggleAutoPause(),
+  'p': () => {
+    if (captionsStore.isAutoPauseMode) {
+      captionsStore.toggleAutoPause() // Turn off auto-pause
+      videoControls.showNotification('Auto-pause mode: OFF')
+    }
+  },
   't': () => videoPlayerRef.value?.cycleAudioTrack(),
   'y': () => {
     captionsStore.cycleActiveTrack()
@@ -154,7 +206,17 @@ useKeyboardShortcuts({
       `Regex replacements: ${settings.regexReplacementsEnabled ? 'ON' : 'OFF'}`
     )
   },
-  '?': () => showHelp.value = !showHelp.value
+  'g': () => {
+    settings.colorizeWords = !settings.colorizeWords
+    settings.saveSettings()
+    videoControls.showNotification(
+      `Word colorization: ${settings.colorizeWords ? 'ON' : 'OFF'}`
+    )
+  },
+  '?': () => showHelp.value = !showHelp.value,
+  'i': () => {
+    videoPlayerRef.value?.toggleSubtitleInfo()
+  },
 })
 
 async function onExportToAnki(caption: Caption) {

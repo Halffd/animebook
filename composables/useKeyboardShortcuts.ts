@@ -1,4 +1,4 @@
-import { onMounted, onUnmounted } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 
 type KeyHandler = (e: KeyboardEvent) => void
 type KeyHandlers = Record<string, KeyHandler>
@@ -6,6 +6,9 @@ type KeyHandlers = Record<string, KeyHandler>
 export function useKeyboardShortcuts(handlers: KeyHandlers) {
   // Track pressed keys to prevent repeated triggering
   const pressedKeys = new Set<string>()
+  // Track last space key press time
+  const lastSpaceKeyTime = ref(0)
+  const SPACE_KEY_DELAY = 300 // 300ms delay for space key
 
   function handleKeyDown(e: KeyboardEvent) {
     const target = e.target as HTMLElement
@@ -24,6 +27,15 @@ export function useKeyboardShortcuts(handlers: KeyHandlers) {
 
     // Add key to pressed keys
     pressedKeys.add(e.key)
+
+    // Special handling for space key
+    if (e.key === ' ') {
+      const now = Date.now()
+      if (now - lastSpaceKeyTime.value < SPACE_KEY_DELAY) {
+        return // Skip if space was pressed too recently
+      }
+      lastSpaceKeyTime.value = now
+    }
 
     const handler = handlers[e.key]
     if (handler) {

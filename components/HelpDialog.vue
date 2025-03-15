@@ -21,9 +21,12 @@ const hotkeysList = [
   { key: 'a/d', desc: 'Previous/Next subtitle' },
   { key: 'Down/s', desc: 'Seek to subtitle start' },
   { key: 'Up/w', desc: 'Toggle auto-pause mode' },
+  { key: 'p', desc: 'Disable auto-pause mode' },
   { key: 'v', desc: 'Toggle subtitle visibility' },
   { key: 'c', desc: 'Toggle secondary subtitles' },
   { key: 'f', desc: 'Toggle furigana' },
+  { key: 'g', desc: 'Toggle word colorization' },
+  { key: 'i', desc: 'Toggle subtitle track info' },
   { key: 'x', desc: 'Toggle sidebar' },
   { key: 't', desc: 'Cycle audio tracks' },
   { key: 'y', desc: 'Cycle subtitle tracks' },
@@ -187,6 +190,24 @@ function setActiveTab(tab: TabType) {
               </div>
               <p class="text-sm text-gray-400 mt-1">
                 Sudachi generally provides more accurate readings but requires a running Python server
+              </p>
+            </div>
+
+            <div>
+              <h3 class="text-lg mb-2">Word Colorization</h3>
+              <div class="flex items-center">
+                <label class="inline-flex items-center">
+                  <input
+                    type="checkbox"
+                    v-model="settings.colorizeWords"
+                    class="mr-2"
+                    @change="settings.saveSettings()"
+                  >
+                  Colorize words by part of speech
+                </label>
+              </div>
+              <p class="text-sm text-gray-400 mt-1">
+                Colors each word according to its grammatical function (nouns, verbs, particles, etc.)
               </p>
             </div>
           </div>

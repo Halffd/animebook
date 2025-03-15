@@ -43,6 +43,7 @@ interface AudioTrack {
 const audioTracks = ref<AudioTrack[]>([])
 const selectedAudioTrack = ref<number>(0)
 const playbackRate = ref(1)
+const showSubtitleInfo = ref(false)
 
 const hasSubtitles = computed(() => store.showSubtitles && store.activeCaptions.length > 0)
 
@@ -93,12 +94,25 @@ function onTimeUpdate(e: Event) {
   const video = e.target as HTMLVideoElement
   emit('timeupdate', video.currentTime)
 
-  // Handle auto-pause
-  if (store.isAutoPauseMode && store.activeCaptions.length > 0) {
-    const caption = store.activeCaptions[0]
-    if (video.currentTime > caption.endTime && !video.paused) {
-      video.pause()
-      store.lastPauseTime = video.currentTime
+  // Handle auto-pause - only if explicitly enabled
+  if (store.isAutoPauseMode) {
+    // Get active captions from the active track only
+    const activeTrackCaptions = store.activeTrack?.captions.filter(caption => 
+      caption.startTime <= video.currentTime && 
+      video.currentTime <= caption.endTime
+    ) || []
+    
+    // Only pause if we have active captions and the video time exceeds the end time
+    if (activeTrackCaptions.length > 0) {
+      const lastCaption = activeTrackCaptions[activeTrackCaptions.length - 1]
+      // Only pause if we've just passed the end time (within 0.1 seconds)
+      if (video.currentTime > lastCaption.endTime && 
+          video.currentTime < lastCaption.endTime + 0.1 && 
+          !video.paused) {
+        console.log(`[Player] Auto-pausing at ${video.currentTime}, caption end: ${lastCaption.endTime}`)
+        video.pause()
+        store.lastPauseTime = video.currentTime
+      }
     }
   }
 }
@@ -166,19 +180,66 @@ function adjustPlaybackRate(increase: boolean) {
   emit('notify', `Playback speed: ${rate.toFixed(2)}x`)
 }
 
+// Toggle subtitle track info display
+function toggleSubtitleInfo() {
+  showSubtitleInfo.value = !showSubtitleInfo.value
+  emit('notify', `Subtitle info: ${showSubtitleInfo.value ? 'ON' : 'OFF'}`)
+}
+
 // Apply regex replacements when showing subtitles
 function processText(text: string): string {
-  if (!settings.regexReplacementsEnabled || !settings.regexReplacements.length) {
-    return text
+  // First apply regex replacements if enabled
+  let processed = text
+  if (settings.regexReplacementsEnabled && settings.regexReplacements.length) {
+    processed = settings.regexReplacements.reduce((processed, { regex, replaceText }) => {
+      try {
+        return processed.replace(new RegExp(regex, 'g'), replaceText)
+      } catch (e) {
+        return processed
+      }
+    }, processed)
   }
   
-  return settings.regexReplacements.reduce((processed, { regex, replaceText }) => {
-    try {
-      return processed.replace(new RegExp(regex, 'g'), replaceText)
-    } catch (e) {
-      return processed
+  // Remove SRT/ASS HTML tags that shouldn't be displayed
+  // This includes font tags, b tags, i tags, etc.
+  processed = processed
+    .replace(/<\/?font[^>]*>/gi, '') // Remove font tags
+    .replace(/<\/?b>/gi, '') // Remove bold tags
+    .replace(/<\/?i>/gi, '') // Remove italic tags
+    .replace(/<\/?u>/gi, '') // Remove underline tags
+    .replace(/<\/?s>/gi, '') // Remove strike tags
+    .replace(/&lt;/g, '<') // Replace &lt; with <
+    .replace(/&gt;/g, '>') // Replace &gt; with >
+  
+  // For ASS subtitles, ensure proper spacing for non-Japanese text
+  // This helps with languages that use Latin script but might have formatting issues
+  const isJapanese = /[\u3000-\u303f\u3040-\u309f\u30a0-\u30ff\uff00-\uff9f\u4e00-\u9faf\u3400-\u4dbf]/.test(processed)
+  
+  if (!isJapanese) {
+    // Fix common ASS subtitle formatting issues:
+    // 1. Replace multiple spaces with a single space
+    // 2. Ensure there's a space after punctuation if followed by a letter
+    processed = processed
+      .replace(/\s+/g, ' ')
+      .replace(/([.!?,:;])([a-zA-Z])/g, '$1 $2')
+      .trim()
+  }
+  
+  return processed
+}
+
+// Process tokens for colored display
+function processTokens(tokens: any[]): any[] {
+  if (!tokens || !Array.isArray(tokens)) return []
+  
+  return tokens.map(token => {
+    // Ensure token has all required properties
+    return {
+      surface_form: token.surface_form || token[0] || '',
+      reading: token.reading || token[1] || '',
+      pos: token.pos || ''
     }
-  }, text)
+  })
 }
 
 // Clean up blob URLs when component is unmounted
@@ -191,7 +252,8 @@ onUnmounted(() => {
 // Expose methods to parent
 defineExpose({
   cycleAudioTrack,
-  adjustPlaybackRate
+  adjustPlaybackRate,
+  toggleSubtitleInfo
 })
 </script>
 
@@ -230,9 +292,9 @@ defineExpose({
       Audio: {{ selectedAudioTrack + 1 }}/{{ audioTracks.length }}
     </div>
 
-    <!-- Subtitle tracks indicator -->
+    <!-- Subtitle tracks indicator - toggleable with showSubtitleInfo -->
     <div 
-      v-if="store.subtitleTracks.length > 1"
+      v-if="showSubtitleInfo && store.subtitleTracks.length > 1"
       class="fixed top-12 right-4 bg-black/50 px-3 py-2 rounded text-white text-sm z-40"
     >
       <div>Subtitles: {{ store.activeTrackIndex + 1 }}/{{ store.subtitleTracks.length }}</div>
@@ -249,28 +311,78 @@ defineExpose({
         fontSize: `calc(${settings.subtitleFontSize} * 1.5rem)`
       }"
     >
-      <div
-        v-for="caption in store.allActiveCaptions"
-        :key="caption.id"
-        :class="[
-          'subtitle-line',
-          `lane-${caption.lane || 0}`,
-          { 'primary-track': store.activeCaptionIds.includes(caption.id) },
-          { 'secondary-track': !store.activeCaptionIds.includes(caption.id) && store.showSecondarySubtitles }
-        ]"
-        v-show="store.activeCaptionIds.includes(caption.id) || store.showSecondarySubtitles"
-      >
-        <template v-if="caption.furigana && store.showFurigana">
-          <Furigana
-            v-for="([text, reading], index) in caption.furigana"
-            :key="`${caption.id}-${index}-${text}`"
-            :text="processText(text)"
-            :reading="reading"
-          />
-        </template>
-        <template v-else>
-          {{ processText(caption.text) }}
-        </template>
+      <!-- Stack all captions from all tracks -->
+      <div class="subtitle-stack">
+        <!-- Active track first -->
+        <div
+          class="subtitle-track active-track"
+        >
+          <div
+            v-for="caption in store.activeTrack?.captions.filter(c => 
+              c.startTime <= props.currentTime && props.currentTime <= c.endTime
+            )"
+            :key="`active-${caption.id}`"
+            class="subtitle-line lane-0 primary-track"
+          >
+            <template v-if="caption.furigana && store.showFurigana">
+              <Furigana
+                v-for="([text, reading], index) in caption.furigana"
+                :key="`${caption.id}-${index}-${text}`"
+                :text="processText(text)"
+                :reading="reading"
+              />
+            </template>
+            <template v-else-if="caption.tokens && settings.colorizeWords">
+              <ColoredWord
+                v-for="(token, index) in processTokens(caption.tokens)"
+                :key="`${caption.id}-token-${index}`"
+                :text="processText(token.surface_form)"
+                :reading="token.reading"
+                :pos="token.pos"
+              />
+            </template>
+            <template v-else>
+              <span v-html="processText(caption.text)"></span>
+            </template>
+          </div>
+        </div>
+        
+        <!-- Secondary tracks -->
+        <div
+          v-if="store.showSecondarySubtitles"
+          v-for="(track, trackIndex) in store.subtitleTracks.filter((_, i) => i !== store.activeTrackIndex)"
+          :key="`track-${trackIndex}`"
+          class="subtitle-track"
+        >
+          <div
+            v-for="caption in track.captions.filter(c => 
+              c.startTime <= props.currentTime && props.currentTime <= c.endTime
+            )"
+            :key="`${track.metadata.language}-${caption.id}`"
+            class="subtitle-line lane-0 secondary-track"
+          >
+            <template v-if="caption.furigana && store.showFurigana">
+              <Furigana
+                v-for="([text, reading], index) in caption.furigana"
+                :key="`${caption.id}-${index}-${text}`"
+                :text="processText(text)"
+                :reading="reading"
+              />
+            </template>
+            <template v-else-if="caption.tokens && settings.colorizeWords">
+              <ColoredWord
+                v-for="(token, index) in processTokens(caption.tokens)"
+                :key="`${caption.id}-token-${index}`"
+                :text="processText(token.surface_form)"
+                :reading="token.reading"
+                :pos="token.pos"
+              />
+            </template>
+            <template v-else>
+              <span v-html="processText(caption.text)"></span>
+            </template>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -293,6 +405,7 @@ defineExpose({
   width: 100%;
   height: 100%;
   object-fit: contain;
+  outline: none; /* Remove focus outline */
 }
 
 .subtitles-container {
@@ -307,6 +420,25 @@ defineExpose({
   align-items: center;
   pointer-events: none;
   z-index: 30;
+}
+
+.subtitle-stack {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+.subtitle-track {
+  width: 100%;
+  margin-bottom: 2rem; /* Increased spacing between tracks */
+}
+
+.hidden-track {
+  display: none;
+}
+
+.active-track .subtitle-line {
+  color: white;
 }
 
 .subtitle-line {

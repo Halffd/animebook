@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { Caption, SubtitleTrack } from '~/types'
-import { makeFurigana } from '~/server/services/tokenizer'
+import { makeFurigana, tokenize } from '~/server/services/tokenizer'
 import { useFurigana } from '~/composables/useFurigana'
 
 export const useCaptionsStore = defineStore('captions', () => {
@@ -63,13 +63,23 @@ export const useCaptionsStore = defineStore('captions', () => {
 
       const startTime = timeToSeconds(timeMatch[1])
       const endTime = timeToSeconds(timeMatch[2])
+      
+      // Join all lines after the timestamp line
       const text = lines.slice(2).join('\n')
+      
+      // Decode HTML entities
+      const decodedText = text
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&amp;/g, '&')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
 
       return {
         id: generateId(),
         startTime,
         endTime,
-        text,
+        text: decodedText,
         isActive: false
       } as Caption
     })
@@ -88,7 +98,13 @@ export const useCaptionsStore = defineStore('captions', () => {
 
       const startTime = timeToSeconds(parts[1])
       const endTime = timeToSeconds(parts[2])
-      const text = parts.slice(9).join(',').trim()
+      
+      // Extract the text and clean it
+      let text = parts.slice(9).join(',').trim()
+      
+      // Remove ASS formatting tags like {\an8} or {\i1}
+      text = text.replace(/\{\\[^}]*\}/g, '')
+      
       const voice = parts[3] && parts[4] ? `${parts[3]} ${parts[4]}` : undefined
 
       return {
@@ -199,11 +215,11 @@ export const useCaptionsStore = defineStore('captions', () => {
 
   async function loadCaptions(fileContent: string, language?: string, title?: string) {
     const parsed = parseCaptions(fileContent)
-      if (!parsed) return
+    if (!parsed) return
 
-      const { processFurigana } = useFurigana()
+    const { processFurigana } = useFurigana()
 
-    console.log(`[Store] Processing furigana for ${parsed.length} captions`)
+    console.log(`[Store] Processing furigana for ${parsed.length} captions, language: ${language || 'unknown'}`)
     
     // Add metadata to track
     const trackInfo = {
@@ -211,28 +227,52 @@ export const useCaptionsStore = defineStore('captions', () => {
       title: title || `Track ${subtitleTracks.value.length + 1}`
     }
 
-      // Process furigana for each caption
+    // Check if this track already exists (to prevent duplicates)
+    const isDuplicate = subtitleTracks.value.some(track => 
+      track.metadata.language === trackInfo.language && 
+      track.metadata.title === trackInfo.title &&
+      track.captions.length === parsed.length
+    )
+
+    if (isDuplicate) {
+      console.warn(`[Store] Skipping duplicate subtitle track: ${trackInfo.language} - ${trackInfo.title}`)
+      return
+    }
+
+    // Process furigana and tokens for each caption
     const processingPromises = parsed.map(async (caption) => {
       try {
-        // Only process furigana for Japanese text
+        // Only process Japanese text
         if (language === 'jpn' || language === 'ja' || !language) {
-        const furigana = await processFurigana(caption.text)
+          // Process furigana
+          const furigana = await processFurigana(caption.text)
           if (furigana && furigana.length > 0) {
-          caption.furigana = furigana
+            caption.furigana = furigana
             console.log(`[Store] Furigana processed for caption: "${caption.text.substring(0, 30)}${caption.text.length > 30 ? '...' : ''}"`)
           } else {
             console.warn(`[Store] No furigana generated for caption: "${caption.text.substring(0, 30)}${caption.text.length > 30 ? '...' : ''}"`)
           }
+          
+          // Process tokens for colored display
+          try {
+            const tokens = await tokenize(caption.text)
+            if (tokens && tokens.length > 0) {
+              caption.tokens = tokens
+              console.log(`[Store] Tokens processed for caption: "${caption.text.substring(0, 30)}${caption.text.length > 30 ? '...' : ''}"`)
+            }
+          } catch (tokenError) {
+            console.error(`[Store] Error processing tokens for caption: "${caption.text.substring(0, 30)}${caption.text.length > 30 ? '...' : ''}"`, tokenError)
+          }
         }
       } catch (error) {
-        console.error(`[Store] Error processing furigana for caption: "${caption.text.substring(0, 30)}${caption.text.length > 30 ? '...' : ''}"`, error)
+        console.error(`[Store] Error processing caption: "${caption.text.substring(0, 30)}${caption.text.length > 30 ? '...' : ''}"`, error)
       }
     })
     
-    // Wait for all furigana processing to complete
+    // Wait for all processing to complete
     await Promise.all(processingPromises)
     
-    console.log(`[Store] Furigana processing completed for all captions`)
+    console.log(`[Store] Caption processing completed for all captions`)
 
     // Add as a new track with metadata
     subtitleTracks.value.push({
@@ -314,6 +354,7 @@ export const useCaptionsStore = defineStore('captions', () => {
   function toggleAutoPause() {
     isAutoPauseMode.value = !isAutoPauseMode.value
     lastPauseTime.value = currentTime.value
+    console.log(`[Store] Auto-pause mode ${isAutoPauseMode.value ? 'enabled' : 'disabled'}`)
   }
 
   function toggleSubtitles() {

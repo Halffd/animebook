@@ -15,6 +15,7 @@ export interface Caption {
   endTime: number
   text: string
   furigana?: Array<[string, string]>
+  tokens?: Token[]
   lane?: number
   isActive?: boolean
   customOffset?: number | null

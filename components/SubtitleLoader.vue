@@ -19,10 +19,11 @@ async function handleFileUpload(event: Event) {
   
   try {
     const files = Array.from(input.files)
+    let loadedCount = 0
     
     for (const file of files) {
       // Try to extract language and title from filename
-      // Format: filename_language_title.ext
+      // Format: filename_language_title.ext or filename.language.ext
       const filenameParts = file.name.split('.')
       const extension = filenameParts.pop()?.toLowerCase()
       const nameParts = filenameParts.join('.').split('_')
@@ -34,7 +35,22 @@ async function handleFileUpload(event: Event) {
         // Assume format is filename_language_title
         language = nameParts[nameParts.length - 2]
         title = nameParts[nameParts.length - 1]
+      } else if (filenameParts.length >= 2) {
+        // Try format filename.language.ext
+        language = filenameParts[filenameParts.length - 1]
+        title = filenameParts[0]
       }
+      
+      // Map common language codes
+      if (language === 'en') language = 'eng'
+      else if (language === 'ja') language = 'jpn'
+      else if (language === 'es') language = 'spa'
+      else if (language === 'fr') language = 'fre'
+      else if (language === 'de') language = 'ger'
+      else if (language === 'it') language = 'ita'
+      else if (language === 'ru') language = 'rus'
+      else if (language === 'pt') language = 'por'
+      else if (language === 'ar') language = 'ara'
       
       // Check if it's a subtitle file
       if (['srt', 'vtt', 'ass'].includes(extension || '')) {
@@ -42,13 +58,17 @@ async function handleFileUpload(event: Event) {
         const trackIndex = await store.loadCaptions(content, language, title)
         
         if (trackIndex !== undefined) {
-          success.value = `Loaded ${files.length} subtitle track(s)`
+          loadedCount++
         } else {
           error.value = `Failed to parse subtitle file: ${file.name}`
         }
       } else {
         error.value = `Unsupported file format: ${extension}`
       }
+    }
+    
+    if (loadedCount > 0) {
+      success.value = `Loaded ${loadedCount} subtitle track(s)`
     }
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Unknown error loading subtitles'
