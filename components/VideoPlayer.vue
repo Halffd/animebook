@@ -291,9 +291,7 @@ defineExpose({
 
 .video-element {
   width: 100%;
-  height: auto;
-  max-height: calc(100vh - 20vh);
-  max-height: calc(100dvh - 20vh);
+  height: 100%;
   object-fit: contain;
 }
 
@@ -315,7 +313,7 @@ defineExpose({
   position: relative;
   text-align: center;
   color: white;
-  font-size: 1.5rem;
+  font-size: 2rem;
   line-height: 1.4;
   text-shadow: 
     0 0 5px rgba(0,0,0,0.8),
@@ -332,7 +330,7 @@ defineExpose({
 
 .secondary-track {
   color: #ffeb3b; /* Yellow color for secondary tracks */
-  font-size: 1.2rem;
+  font-size: 1.6rem;
 }
 
 .lane-0 { transform: translateY(0); }

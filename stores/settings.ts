@@ -19,7 +19,7 @@ export const useSettingsStore = defineStore('settings', {
   state: (): Settings => ({
     videoAlignment: 'center',
     showVideoControls: true,
-    subtitleFontSize: 1.0,
+    subtitleFontSize: 1.5,
     regexReplacements: [
       { regex: '\\(\\(.*?\\)\\)', replaceText: '' },
       { regex: '\\(.*?\\)', replaceText: '' },

@@ -23,14 +23,14 @@ function onExportToAnki(caption: any) {
   <div 
     class="min-h-screen min-h-[100dvh] bg-black text-white relative flex flex-col"
     :class="[
-      { 'mr-[400px]': store.isSidebarVisible }
+      { 'mb-[300px]': store.isSidebarVisible }
     ]"
   >
     <NuxtPage class="flex-1" />
     <div 
-      class="fixed top-0 right-0 w-[400px] h-screen h-[100dvh] bg-gray-900 transition-transform duration-300 ease-in-out z-50 overflow-y-auto"
+      class="fixed bottom-0 left-0 w-full h-[300px] bg-gray-900 transition-transform duration-300 ease-in-out z-50 overflow-y-auto"
       :class="[
-        { 'translate-x-full': !store.isSidebarVisible }
+        { 'translate-y-full': !store.isSidebarVisible }
       ]"
     >
       <CaptionsList
@@ -69,14 +69,13 @@ html, body {
 
 .video-element {
   width: 100%;
-  height: auto;
-  max-height: 100vh;
-  max-height: 100dvh;
+  height: 100%;
+  object-fit: contain;
 }
 
 /* Sidebar transitions */
-.translate-x-full {
-  transform: translateX(100%);
+.translate-y-full {
+  transform: translateY(100%);
 }
 
 /* Ensure proper stacking context */

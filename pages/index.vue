@@ -96,9 +96,19 @@ useKeyboardShortcuts({
     videoControls.showNotification(`Furigana: ${captionsStore.showFurigana ? 'ON' : 'OFF'}`)
   },
   'ArrowLeft': () => captionsStore.previousCaption(),
-  'a': () => captionsStore.previousCaption(),
+  'a': (e: KeyboardEvent) => {
+    if (!e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
+      captionsStore.previousCaption()
+      videoControls.showNotification('Previous caption')
+    }
+  },
   'ArrowRight': () => captionsStore.nextCaption(),
-  'd': () => captionsStore.nextCaption(),
+  'd': (e: KeyboardEvent) => {
+    if (!e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
+      captionsStore.nextCaption()
+      videoControls.showNotification('Next caption')
+    }
+  },
   'ArrowDown': () => captionsStore.seekToSubtitleStart(),
   's': () => captionsStore.seekToSubtitleStart(),
   'ArrowUp': () => captionsStore.toggleAutoPause(),
@@ -115,10 +125,12 @@ useKeyboardShortcuts({
   '-': () => {
     settings.subtitleFontSize = Math.max(0.5, settings.subtitleFontSize - 0.1)
     settings.saveSettings()
+    videoControls.showNotification(`Subtitle size: ${Math.round(settings.subtitleFontSize * 100)}%`)
   },
   '=': () => {
     settings.subtitleFontSize = Math.min(2, settings.subtitleFontSize + 0.1)
     settings.saveSettings()
+    videoControls.showNotification(`Subtitle size: ${Math.round(settings.subtitleFontSize * 100)}%`)
   },
   'D': (e: KeyboardEvent) => {
     if (e.shiftKey) {
@@ -231,7 +243,7 @@ const handleFileSelect = async (event: Event) => {
     />
 
     <button 
-      class="fixed top-4 right-4 p-2 bg-gray-800 text-white rounded hover:bg-gray-700 z-40"
+      class="fixed bottom-4 left-4 p-2 bg-gray-800 text-white rounded hover:bg-gray-700 z-40"
       @click="captionsStore.toggleSidebar"
     >
       Toggle Sidebar
