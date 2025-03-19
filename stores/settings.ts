@@ -14,6 +14,7 @@ interface Settings {
   regexReplacementsEnabled: boolean
   tokenizationMethod: 'kuromoji' | 'sudachi'
   colorizeWords: boolean
+  hideControlButtons: boolean
 }
 
 export const useSettingsStore = defineStore('settings', {
@@ -28,7 +29,8 @@ export const useSettingsStore = defineStore('settings', {
     ],
     regexReplacementsEnabled: true,
     tokenizationMethod: 'kuromoji',
-    colorizeWords: false
+    colorizeWords: false,
+    hideControlButtons: false
   }),
 
   actions: {

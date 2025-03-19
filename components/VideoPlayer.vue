@@ -28,6 +28,8 @@ const emit = defineEmits<{
   'error': [error: Error]
   'notify': [message: string]
   'audio-track-change': [track: number]
+  'playing': []
+  'pause': []
 }>()
 
 const videoRef = ref<HTMLVideoElement>()
@@ -50,8 +52,6 @@ const hasSubtitles = computed(() => store.showSubtitles && store.allActiveCaptio
 
 // Add computed property to check if we have secondary subtitles
 const hasSecondarySubtitles = computed(() => {
-  if (!store.showSecondarySubtitles) return false
-  
   // Check if we have any active captions from secondary tracks
   return store.subtitleTracks.some((track, index) => 
     index !== store.activeTrackIndex && 
@@ -120,10 +120,15 @@ function onTimeUpdate(e: Event) {
     // Only pause if we have active captions and the video time exceeds the end time
     if (activeTrackCaptions.length > 0) {
       const lastCaption = activeTrackCaptions[activeTrackCaptions.length - 1]
+      
       // Only pause if we've just passed the end time (within 0.1 seconds)
+      // Also check if we haven't just paused recently (within 1 second)
+      const timeSinceLastPause = store.lastPauseTime ? video.currentTime - store.lastPauseTime : Infinity
+      
       if (video.currentTime > lastCaption.endTime && 
           video.currentTime < lastCaption.endTime + 0.1 && 
-          !video.paused) {
+          !video.paused &&
+          timeSinceLastPause > 1.0) {
         console.log(`[Player] Auto-pausing at ${video.currentTime}, caption end: ${lastCaption.endTime}`)
         video.pause()
         store.lastPauseTime = video.currentTime
@@ -225,6 +230,7 @@ function processText(text: string): string {
     .replace(/<\/?s>/gi, '') // Remove strike tags
     .replace(/&lt;/g, '<') // Replace &lt; with <
     .replace(/&gt;/g, '>') // Replace &gt; with >
+    .replace(/&amp;/g, '&') // Replace &amp; with &
   
   // Check if text contains Japanese characters
   const japaneseMatches = processed.match(/[\u3000-\u303f\u3040-\u309f\u30a0-\u30ff\uff00-\uff9f\u4e00-\u9faf\u3400-\u4dbf]/g)
@@ -286,20 +292,14 @@ defineExpose({
       ref="videoRef"
       class="video-element"
       :src="videoUrl"
-      :playbackRate="playbackRate"
+      controls
+      disablepictureinpicture
       @timeupdate="onTimeUpdate"
       @error="onError"
-      @loadeddata="onLoad"
-      controls
-      disablePictureInPicture
-    >
-      <track
-        v-if="captions"
-        kind="subtitles"
-        :src="captionsUrl"
-        default
-      />
-    </video>
+      @loadedmetadata="onLoad"
+      @playing="$emit('playing')"
+      @pause="$emit('pause')"
+    />
 
     <!-- Audio track indicator -->
     <div 
@@ -335,28 +335,36 @@ defineExpose({
           class="subtitle-track active-track"
         >
           <div
-            v-for="caption in store.activeTrack?.captions.filter(c => 
+            v-for="caption in store.activeCaptions.filter(c => 
               c.startTime <= props.currentTime && props.currentTime <= c.endTime
             )"
             :key="`active-${caption.id}`"
             class="subtitle-line lane-0 primary-track"
           >
             <template v-if="caption.furigana && store.showFurigana">
-              <Furigana
-                v-for="([text, reading], index) in caption.furigana"
-                :key="`${caption.id}-${index}-${text}`"
-                :text="processText(text)"
-                :reading="reading"
-              />
+              <span class="furigana-container" v-html="
+                caption.furigana.map(([text, reading]) => {
+                  const processedText = processText(text);
+                  if (/^[\s\p{P}]+$/u.test(processedText)) {
+                    return processedText;
+                  } else if (/[\u4E00-\u9FAF\u3400-\u4DBF]/.test(processedText) && reading && reading !== processedText) {
+                    return `<ruby>${processedText}<rt>${reading}</rt></ruby>`;
+                  } else {
+                    return processedText;
+                  }
+                }).join('')
+              "></span>
             </template>
             <template v-else-if="caption.tokens && settings.colorizeWords">
-              <ColoredWord
-                v-for="(token, index) in processTokens(caption.tokens)"
-                :key="`${caption.id}-token-${index}`"
-                :text="processText(token.surface_form)"
-                :reading="token.reading"
-                :pos="token.pos"
-              />
+              <span class="tokens-container">
+                <ColoredWord
+                  v-for="(token, index) in processTokens(caption.tokens)"
+                  :key="`${caption.id}-token-${index}`"
+                  :text="processText(token.surface_form)"
+                  :reading="token.reading"
+                  :pos="token.pos"
+                />
+              </span>
             </template>
             <template v-else>
               <span v-html="processText(caption.text)"></span>
@@ -367,37 +375,49 @@ defineExpose({
         <!-- Secondary tracks -->
         <div
           v-if="hasSecondarySubtitles"
-          v-for="(track, trackIndex) in store.subtitleTracks.filter((_, i) => i !== store.activeTrackIndex)"
-          :key="`track-${trackIndex}`"
-          class="subtitle-track"
+          class="subtitle-track secondary-tracks-container"
         >
           <div
-            v-for="caption in track.captions.filter(c => 
-              c.startTime <= props.currentTime && props.currentTime <= c.endTime
-            )"
-            :key="`${track.metadata.language}-${caption.id}`"
-            class="subtitle-line lane-0 secondary-track"
+            v-for="(track, trackIndex) in store.subtitleTracks.filter((_, i) => i !== store.activeTrackIndex)"
+            :key="`track-${trackIndex}`"
           >
-            <template v-if="caption.furigana && store.showFurigana">
-              <Furigana
-                v-for="([text, reading], index) in caption.furigana"
-                :key="`${caption.id}-${index}-${text}`"
-                :text="processText(text)"
-                :reading="reading"
-              />
-            </template>
-            <template v-else-if="caption.tokens && settings.colorizeWords">
-              <ColoredWord
-                v-for="(token, index) in processTokens(caption.tokens)"
-                :key="`${caption.id}-token-${index}`"
-                :text="processText(token.surface_form)"
-                :reading="token.reading"
-                :pos="token.pos"
-              />
-            </template>
-            <template v-else>
-              <span v-html="processText(caption.text)"></span>
-            </template>
+            <div
+              v-for="caption in track.captions.filter(c => 
+                c.startTime <= props.currentTime && props.currentTime <= c.endTime
+              )"
+              :key="`${track.metadata.language}-${caption.id}`"
+              class="subtitle-line lane-0 secondary-track"
+              v-show="store.showSecondarySubtitles"
+            >
+              <template v-if="caption.furigana && store.showFurigana">
+                <span class="furigana-container" v-html="
+                  caption.furigana.map(([text, reading]) => {
+                    const processedText = processText(text);
+                    if (/^[\s\p{P}]+$/u.test(processedText)) {
+                      return processedText;
+                    } else if (/[\u4E00-\u9FAF\u3400-\u4DBF]/.test(processedText) && reading && reading !== processedText) {
+                      return `<ruby>${processedText}<rt>${reading}</rt></ruby>`;
+                    } else {
+                      return processedText;
+                    }
+                  }).join('')
+                "></span>
+              </template>
+              <template v-else-if="caption.tokens && settings.colorizeWords">
+                <span class="tokens-container">
+                  <ColoredWord
+                    v-for="(token, index) in processTokens(caption.tokens)"
+                    :key="`${caption.id}-token-${index}`"
+                    :text="processText(token.surface_form)"
+                    :reading="token.reading"
+                    :pos="token.pos"
+                  />
+                </span>
+              </template>
+              <template v-else>
+                <span v-html="processText(caption.text)"></span>
+              </template>
+            </div>
           </div>
         </div>
       </div>
@@ -447,7 +467,7 @@ defineExpose({
 
 .subtitle-track {
   width: 100%;
-  margin-bottom: 2rem; /* Increased spacing between tracks */
+  margin-bottom: 0.8rem; /* Reduced spacing between tracks from 2rem */
 }
 
 .hidden-track {
@@ -460,16 +480,21 @@ defineExpose({
 
 .subtitle-line {
   position: relative;
+  display: inline-block;
+  padding: 0.2em 0.5em;
+  margin-bottom: 0.2em;
+  background-color: rgba(0, 0, 0, 0.7);
+  border-radius: 0.25em;
+  max-width: 80%;
   text-align: center;
   color: white;
   font-size: 2rem;
-  line-height: 1.4;
+  line-height: 2;
   text-shadow: 
-    0 0 5px rgba(0,0,0,0.8),
-    0 0 10px rgba(0,0,0,0.5);
-  padding: 0.2em;
-  background: transparent;
-  width: 100%;
+    0 0 5px rgba(0,0,0,0.9),
+    0 0 10px rgba(0,0,0,0.7);
+  word-wrap: break-word;
+  word-break: normal;
   margin: 0 auto;
 }
 
@@ -482,6 +507,10 @@ defineExpose({
     0 0 15px rgba(0,0,0,0.5);
 }
 
+.secondary-tracks-container {
+  margin-top: 0.5rem;
+}
+
 .secondary-track {
   color: #ffeb3b; /* Yellow color for secondary tracks */
   font-size: 1.6rem;
@@ -489,10 +518,11 @@ defineExpose({
   text-shadow: 
     0 0 5px rgba(0,0,0,0.9),
     0 0 8px rgba(0,0,0,0.7);
-  background-color: rgba(0, 0, 0, 0.4);
+  background-color: rgba(0, 0, 0, 0.6);
   border-radius: 8px;
   padding: 0.3em 0.5em;
-  margin-top: 0.5em;
+  margin-top: 0.2em;
+  line-height: 2;
 }
 
 .lane-0 { transform: translateY(0); }
@@ -531,5 +561,37 @@ defineExpose({
     font-size: 1rem;
     padding: 0.2em 0.4em;
   }
+}
+
+.furigana-container {
+  display: inline;
+  white-space: normal;
+  word-wrap: break-word;
+  word-break: normal;
+  line-height: 2;
+}
+
+.furigana-container ruby {
+  ruby-align: center;
+  display: inline;
+  position: relative;
+  margin: 0;
+  padding: 0;
+}
+
+.furigana-container rt {
+  font-size: 0.5em;
+  color: rgba(255, 255, 255, 0.9);
+  line-height: 1;
+  text-shadow: 0 0 3px rgba(0, 0, 0, 0.8);
+  text-align: center;
+  white-space: nowrap;
+}
+
+.tokens-container {
+  display: inline;
+  white-space: normal;
+  word-wrap: break-word;
+  word-break: normal;
 }
 </style> 

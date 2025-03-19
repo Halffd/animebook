@@ -12,6 +12,8 @@ import { useRoute } from 'vue-router'
 
 const videoUrl = ref<string | null>(null)
 const error = ref<string | null>(null)
+const isPlaying = ref(false)
+const showControls = ref(false)
 
 const captionsStore = useCaptionsStore()
 const showHelp = ref(false)
@@ -201,10 +203,13 @@ useKeyboardShortcuts({
     }
   },
   'h': () => {
-    settings.toggleRegexReplacements()
-    videoControls.showNotification(
-      `Regex replacements: ${settings.regexReplacementsEnabled ? 'ON' : 'OFF'}`
-    )
+    showControls.value = !showControls.value
+    if (showControls.value) {
+      // Auto-hide controls after 3 seconds
+      setTimeout(() => {
+        showControls.value = false
+      }, 3000)
+    }
   },
   'g': () => {
     settings.colorizeWords = !settings.colorizeWords
@@ -282,6 +287,8 @@ const handleFileSelect = async (event: Event) => {
       @error="error = $event.message"
       @notify="videoControls.showNotification"
       @audio-track-change="onAudioTrackChange"
+      @playing="isPlaying = true"
+      @pause="isPlaying = false"
       class="flex-1"
     />
 
@@ -304,27 +311,45 @@ const handleFileSelect = async (event: Event) => {
       @export-to-anki="onExportToAnki"
     />
 
-    <button 
-      class="fixed bottom-4 left-4 p-2 bg-gray-800 text-white rounded hover:bg-gray-700 z-40"
-      @click="captionsStore.toggleSidebar"
-    >
-      Toggle Sidebar
-    </button>
+    <Transition name="fade">
+      <button 
+        v-if="showControls"
+        class="fixed bottom-4 left-4 p-2 bg-gray-800 text-white rounded hover:bg-gray-700 z-40 opacity-75 hover:opacity-100 transition-opacity"
+        @click="captionsStore.toggleSidebar"
+      >
+        Toggle Sidebar
+      </button>
+    </Transition>
 
     <HelpDialog
       :show="showHelp"
       @close="showHelp = false"
     />
 
-    <button 
-      class="fixed bottom-4 right-4 p-2 bg-gray-800 text-white rounded hover:bg-gray-700 z-40"
-      @click="showHelp = true"
-    >
-      ?
-    </button>
+    <Transition name="fade">
+      <button 
+        v-if="showControls"
+        class="fixed bottom-4 right-4 p-2 bg-gray-800 text-white rounded hover:bg-gray-700 z-40 opacity-75 hover:opacity-100 transition-opacity"
+        @click="showHelp = true"
+      >
+        ?
+      </button>
+    </Transition>
 
     <NotificationManager
       :message="videoControls.notification"
     />
   </div>
-</template> 
+</template>
+
+<style>
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+</style> 

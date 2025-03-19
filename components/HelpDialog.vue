@@ -210,6 +210,24 @@ function setActiveTab(tab: TabType) {
                 Colors each word according to its grammatical function (nouns, verbs, particles, etc.)
               </p>
             </div>
+
+            <div>
+              <h3 class="text-lg mb-2">Control Buttons</h3>
+              <div class="flex items-center">
+                <label class="inline-flex items-center">
+                  <input
+                    type="checkbox"
+                    v-model="settings.hideControlButtons"
+                    class="mr-2"
+                    @change="settings.saveSettings()"
+                  >
+                  Hide control buttons during playback
+                </label>
+              </div>
+              <p class="text-sm text-gray-400 mt-1">
+                Hides the sidebar toggle and help buttons while the video is playing
+              </p>
+            </div>
           </div>
 
           <!-- Tips tab -->

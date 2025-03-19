@@ -39,27 +39,26 @@ export const useCaptionsStore = defineStore('captions', () => {
     // First add captions from the active track
     if (activeTrackIndex.value >= 0 && activeTrackIndex.value < subtitleTracks.value.length) {
       const activeTrackCaptions = subtitleTracks.value[activeTrackIndex.value].captions.filter(caption => 
-        activeCaptionIds.value.includes(caption.id)
+        caption.startTime <= currentTime.value && 
+        currentTime.value <= caption.endTime
       )
       active.push(...activeTrackCaptions)
     }
     
     // Then add captions from secondary tracks if enabled
-    if (showSecondarySubtitles.value) {
-      subtitleTracks.value.forEach((track, index) => {
-        // Skip the active track as we've already added its captions
-        if (index === activeTrackIndex.value) return
-        
-        // Find captions that would be active at current time
-        const secondaryCaptions = track.captions.filter(caption => 
-          caption.startTime <= currentTime.value && 
-          currentTime.value <= caption.endTime
-        )
-        
-        // Add them to the active captions list
-        active.push(...secondaryCaptions)
-      })
-    }
+    subtitleTracks.value.forEach((track, index) => {
+      // Skip the active track as we've already added its captions
+      if (index === activeTrackIndex.value) return
+      
+      // Find captions that would be active at current time
+      const secondaryCaptions = track.captions.filter(caption => 
+        caption.startTime <= currentTime.value && 
+        currentTime.value <= caption.endTime
+      )
+      
+      // Add them to the active captions list
+      active.push(...secondaryCaptions)
+    })
     
     return active
   })
@@ -226,9 +225,9 @@ export const useCaptionsStore = defineStore('captions', () => {
 
   async function loadCaptions(fileContent: string, language?: string, title?: string) {
     const parsed = parseCaptions(fileContent)
-    if (!parsed) return
+      if (!parsed) return
 
-    const { processFurigana } = useFurigana()
+      const { processFurigana } = useFurigana()
 
     console.log(`[Store] Processing furigana for ${parsed.length} captions, language: ${language || 'unknown'}`)
     
@@ -380,6 +379,7 @@ export const useCaptionsStore = defineStore('captions', () => {
 
   function toggleSecondarySubtitles() {
     showSecondarySubtitles.value = !showSecondarySubtitles.value
+    console.log(`[Store] Secondary subtitles: ${showSecondarySubtitles.value ? 'ON' : 'OFF'}`)
   }
 
   function toggleFurigana() {

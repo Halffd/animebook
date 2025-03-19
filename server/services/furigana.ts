@@ -116,14 +116,30 @@ function processTokens(tokens: Token[]): Array<{ text: string; furigana?: string
     const surface = token.surface_form
     const reading = token.reading
     
+    // Skip processing for spaces and punctuation
+    if (/^[\s\p{P}]+$/u.test(surface)) {
+      return { text: surface }
+    }
+    
     // Only add furigana if reading is different from surface form
     // and if the surface form contains kanji
     const hasKanji = /[\u4E00-\u9FAF\u3400-\u4DBF]/.test(surface)
     const needsFurigana = hasKanji && reading && reading !== surface
     
+    // Convert katakana to hiragana if needed
+    let furigana = undefined
+    if (needsFurigana && reading) {
+      // Check if reading is in katakana
+      if (KATAKANA_REGEX.test(reading)) {
+        furigana = katakanaToHiragana(reading)
+      } else {
+        furigana = reading
+      }
+    }
+    
     return { 
       text: surface, 
-      furigana: needsFurigana ? reading : undefined 
+      furigana: needsFurigana ? furigana : undefined 
     }
   })
 }
