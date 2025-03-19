@@ -331,9 +331,7 @@ defineExpose({
       <!-- Stack all captions from all tracks -->
       <div class="subtitle-stack">
         <!-- Active track first -->
-        <div
-          class="subtitle-track active-track"
-        >
+        <div class="subtitle-track active-track">
           <div
             v-for="caption in store.activeCaptions.filter(c => 
               c.startTime <= props.currentTime && props.currentTime <= c.endTime
@@ -373,53 +371,22 @@ defineExpose({
           </div>
         </div>
         
-        <!-- Secondary tracks -->
+        <!-- Secondary subtitles directly in stack -->
         <div
-          v-if="hasSecondarySubtitles"
-          class="subtitle-track secondary-tracks-container"
+          v-for="(track, trackIndex) in store.subtitleTracks.filter((_, i) => i !== store.activeTrackIndex)"
+          :key="`track-${trackIndex}`"
+          class="subtitle-track"
         >
           <div
-            v-for="(track, trackIndex) in store.subtitleTracks.filter((_, i) => i !== store.activeTrackIndex)"
-            :key="`track-${trackIndex}`"
+            v-for="caption in track.captions.filter(c => 
+              c.startTime <= props.currentTime && props.currentTime <= c.endTime
+            )"
+            :key="`${track.metadata.language}-${caption.id}`"
+            class="subtitle-line secondary-track"
+            :class="`lane-${caption.lane || 0}`"
+            v-show="store.showSecondarySubtitles"
           >
-            <div
-              v-for="caption in track.captions.filter(c => 
-                c.startTime <= props.currentTime && props.currentTime <= c.endTime
-              )"
-              :key="`${track.metadata.language}-${caption.id}`"
-              class="subtitle-line secondary-track"
-              :class="`lane-${caption.lane || 0}`"
-              v-show="store.showSecondarySubtitles"
-            >
-              <template v-if="caption.furigana && store.showFurigana">
-                <span class="furigana-container" v-html="
-                  caption.furigana.map(([text, reading]) => {
-                    const processedText = processText(text);
-                    if (/^[\s\p{P}]+$/u.test(processedText)) {
-                      return processedText;
-                    } else if (/[\u4E00-\u9FAF\u3400-\u4DBF]/.test(processedText) && reading && reading !== processedText) {
-                      return `<ruby>${processedText}<rt>${reading}</rt></ruby>`;
-                    } else {
-                      return processedText;
-                    }
-                  }).join('')
-                "></span>
-              </template>
-              <template v-else-if="caption.tokens && settings.colorizeWords">
-                <span class="tokens-container">
-                  <ColoredWord
-                    v-for="(token, index) in processTokens(caption.tokens)"
-                    :key="`${caption.id}-token-${index}`"
-                    :text="processText(token.surface_form)"
-                    :reading="token.reading"
-                    :pos="token.pos"
-                  />
-                </span>
-              </template>
-              <template v-else>
-                <span v-html="processText(caption.text)"></span>
-              </template>
-            </div>
+            <span v-html="processText(caption.text)"></span>
           </div>
         </div>
       </div>
@@ -466,6 +433,7 @@ defineExpose({
   flex-direction: column;
   width: 100%;
   position: relative;
+  gap: 0.01em; /* Add space between subtitle lines */
 }
 
 .subtitle-track {
@@ -512,19 +480,6 @@ defineExpose({
     0 0 15px rgba(0,0,0,0.5);
 }
 
-.secondary-tracks-container {
-  margin: 0;
-  padding: 0;
-  position: relative;
-  width: 100%;
-}
-
-.secondary-tracks-container > div {
-  margin: 0;
-  padding: 0;
-  width: 100%;
-}
-
 .secondary-track {
   color: #ffeb3b;
   font-size: v-bind('`${settings.secondarySubtitleFontSize}em`');
@@ -534,27 +489,23 @@ defineExpose({
   text-shadow: 
     0 0 5px rgba(0,0,0,0.9),
     0 0 8px rgba(0,0,0,0.7);
-  padding: 0;
-  margin: 0;
-  line-height: 1.2;
-  transform: translateY(100%); /* Move down relative to primary subtitle */
+  margin-top: 0.2em; /* Add small space above secondary subtitles */
 }
 
-/* Lane positioning for primary subtitles */
-.primary-track.lane-0 { transform: translateY(0); }
-.primary-track.lane-1 { transform: translateY(-100%); }
-.primary-track.lane-2 { transform: translateY(-200%); }
-.primary-track.lane-3 { transform: translateY(-300%); }
-.primary-track.lane-4 { transform: translateY(-400%); }
-.primary-track.lane-5 { transform: translateY(-500%); }
+/* Lane positioning */
+.lane-0 { transform: translateY(0); }
+.lane-1 { transform: translateY(-100%); }
+.lane-2 { transform: translateY(-200%); }
+.lane-3 { transform: translateY(-300%); }
+.lane-4 { transform: translateY(-400%); }
+.lane-5 { transform: translateY(-500%); }
 
-/* Lane positioning for secondary subtitles */
-.secondary-track.lane-0 { transform: translateY(100%); }
-.secondary-track.lane-1 { transform: translateY(0%); }
-.secondary-track.lane-2 { transform: translateY(-100%); }
-.secondary-track.lane-3 { transform: translateY(-200%); }
-.secondary-track.lane-4 { transform: translateY(-300%); }
-.secondary-track.lane-5 { transform: translateY(-400%); }
+.secondary-track.lane-0 { transform: translateY(0); }
+.secondary-track.lane-1 { transform: translateY(-100%); }
+.secondary-track.lane-2 { transform: translateY(-200%); }
+.secondary-track.lane-3 { transform: translateY(-300%); }
+.secondary-track.lane-4 { transform: translateY(-400%); }
+.secondary-track.lane-5 { transform: translateY(-500%); }
 
 /* Video alignment classes */
 .video-container.left {
