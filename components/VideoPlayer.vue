@@ -465,11 +465,14 @@ defineExpose({
   display: flex;
   flex-direction: column;
   width: 100%;
+  position: relative;
 }
 
 .subtitle-track {
   width: 100%;
-  margin-bottom: 0.8rem; /* Reduced spacing between tracks from 2rem */
+  margin: 0;
+  padding: 0;
+  position: relative;
 }
 
 .hidden-track {
@@ -483,15 +486,15 @@ defineExpose({
 .subtitle-line {
   position: relative;
   display: block;
-  padding: 0.1em 0.5em;  /* Reduced vertical padding */
-  margin: 0 auto;        /* Remove margin-bottom */
+  padding: 0;
+  margin: 0 auto;
   max-width: 80%;
   text-align: center;
   color: white;
   font-size: v-bind('`${settings.subtitleFontSize}em`');
   font-family: v-bind('settings.subtitleFontFamily');
   font-weight: v-bind('settings.subtitleFontWeight * 1.5');
-  line-height: 1.2;     /* Reduced line height for tighter text */
+  line-height: 1.2;
   text-shadow: 
     0 0 5px rgba(0,0,0,0.9),
     0 0 10px rgba(0,0,0,0.7),
@@ -510,29 +513,48 @@ defineExpose({
 }
 
 .secondary-tracks-container {
-  margin-top: 0.5rem;
+  margin: 0;
+  padding: 0;
+  position: relative;
+  width: 100%;
+}
+
+.secondary-tracks-container > div {
+  margin: 0;
+  padding: 0;
+  width: 100%;
 }
 
 .secondary-track {
-  color: #ffeb3b; /* Yellow color for secondary tracks */
+  color: #ffeb3b;
   font-size: v-bind('`${settings.secondarySubtitleFontSize}em`');
   font-family: v-bind('settings.secondarySubtitleFontFamily');
-  font-weight: v-bind('settings.secondarySubtitleFontWeight * 1.5'); /* 50% thicker */
+  font-weight: v-bind('settings.secondarySubtitleFontWeight * 1.5');
   opacity: 0.9;
   text-shadow: 
     0 0 5px rgba(0,0,0,0.9),
     0 0 8px rgba(0,0,0,0.7);
-  padding: 0.2em 0.5em;
-  margin-top: 0.1em; /* Reduced from 0.2em */
-  line-height: 1.5;
+  padding: 0;
+  margin: 0;
+  line-height: 1.2;
+  transform: translateY(100%); /* Move down relative to primary subtitle */
 }
 
-.lane-0 { transform: translateY(0); }
-.lane-1 { transform: translateY(-100%); }  /* Adjacent to lane-0 */
-.lane-2 { transform: translateY(-200%); }  /* Adjacent to lane-1 */
-.lane-3 { transform: translateY(-300%); }  /* Adjacent to lane-2 */
-.lane-4 { transform: translateY(-400%); }  /* Adjacent to lane-3 */
-.lane-5 { transform: translateY(-500%); }  /* Adjacent to lane-4 */
+/* Lane positioning for primary subtitles */
+.primary-track.lane-0 { transform: translateY(0); }
+.primary-track.lane-1 { transform: translateY(-100%); }
+.primary-track.lane-2 { transform: translateY(-200%); }
+.primary-track.lane-3 { transform: translateY(-300%); }
+.primary-track.lane-4 { transform: translateY(-400%); }
+.primary-track.lane-5 { transform: translateY(-500%); }
+
+/* Lane positioning for secondary subtitles */
+.secondary-track.lane-0 { transform: translateY(100%); }
+.secondary-track.lane-1 { transform: translateY(0%); }
+.secondary-track.lane-2 { transform: translateY(-100%); }
+.secondary-track.lane-3 { transform: translateY(-200%); }
+.secondary-track.lane-4 { transform: translateY(-300%); }
+.secondary-track.lane-5 { transform: translateY(-400%); }
 
 /* Video alignment classes */
 .video-container.left {
@@ -568,11 +590,9 @@ defineExpose({
 }
 
 .furigana-container {
-  display: inline;
-  white-space: normal;
-  word-wrap: break-word;
-  word-break: normal;
-  line-height: 2;
+  line-height: 1.5;
+  margin: 0;
+  padding: 0;
 }
 
 .furigana-container ruby {
