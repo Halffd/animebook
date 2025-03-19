@@ -63,97 +63,110 @@ export const useCaptionsStore = defineStore('captions', () => {
     return active
   })
 
+  // Add this function for cleaning subtitle text
+  function cleanSubtitleText(text: string): string {
+    return text
+      // Replace ASS line breaks with spaces
+      .replace(/\\N/g, ' ')
+      // Replace multiple spaces with single space
+      .replace(/\s+/g, ' ')
+      // Trim whitespace
+      .trim()
+  }
+
   function parseSRT(content: string): Caption[] {
-    const entries = content.trim().split(/\n\s*\n/).map(block => {
+    const captions: Caption[] = []
+    const blocks = content.trim().split(/\n\s*\n/)
+
+    for (const block of blocks) {
       const lines = block.trim().split('\n')
-      if (lines.length < 3) return null
+      if (lines.length < 3) continue
 
-      const timeMatch = lines[1].match(/(\d{2}:\d{2}:\d{2},\d{3}) --> (\d{2}:\d{2}:\d{2},\d{3})/)
-      if (!timeMatch) return null
+      // Parse timecode
+      const timecode = lines[1].match(/(\d{2}:\d{2}:\d{2},\d{3}) --> (\d{2}:\d{2}:\d{2},\d{3})/)
+      if (!timecode) continue
 
-      const startTime = timeToSeconds(timeMatch[1])
-      const endTime = timeToSeconds(timeMatch[2])
-      
-      // Join all lines after the timestamp line
-      const text = lines.slice(2).join('\n')
-      
-      // Decode HTML entities
-      const decodedText = text
-        .replace(/&lt;/g, '<')
-        .replace(/&gt;/g, '>')
-        .replace(/&amp;/g, '&')
-        .replace(/&quot;/g, '"')
-        .replace(/&#39;/g, "'")
+      const startTime = timeToSeconds(timecode[1].replace(',', '.'))
+      const endTime = timeToSeconds(timecode[2].replace(',', '.'))
 
-      return {
+      // Join and clean text lines
+      const text = cleanSubtitleText(lines.slice(2).join(' '))
+
+      captions.push({
         id: generateId(),
         startTime,
         endTime,
-        text: decodedText,
-        isActive: false
-      } as Caption
-    })
+        text
+      })
+    }
 
-    return entries.filter((entry): entry is Caption => entry !== null)
+    return captions
   }
 
   function parseASS(content: string): Caption[] | null {
+    const captions: Caption[] = []
     const lines = content.split('\n')
-    const events = lines.filter(line => line.startsWith('Dialogue:'))
-    if (!events.length) return null
+    let inEvents = false
 
-    const captions = events.map(line => {
+    for (const line of lines) {
+      if (line.startsWith('[Events]')) {
+        inEvents = true
+        continue
+      }
+
+      if (!inEvents || !line.startsWith('Dialogue:')) continue
+
       const parts = line.split(',')
-      if (parts.length < 10) return null
+      if (parts.length < 10) continue
 
-      const startTime = timeToSeconds(parts[1])
-      const endTime = timeToSeconds(parts[2])
-      
-      // Extract the text and clean it
-      let text = parts.slice(9).join(',').trim()
-      
-      // Remove ASS formatting tags like {\an8} or {\i1}
-      text = text.replace(/\{\\[^}]*\}/g, '')
-      
-      const voice = parts[3] && parts[4] ? `${parts[3]} ${parts[4]}` : undefined
+      const startTime = timeToSeconds(parts[1].trim())
+      const endTime = timeToSeconds(parts[2].trim())
+      // Join and clean text parts
+      const text = cleanSubtitleText(parts.slice(9).join(','))
 
-      return {
+      captions.push({
         id: generateId(),
         startTime,
         endTime,
-        text,
-        voice,
-        isActive: false
-      } as Caption
-    })
+        text
+      })
+    }
 
-    return captions.filter((entry): entry is Caption => entry !== null)
+    return captions.length > 0 ? captions : null
   }
 
   function parseVTT(content: string): Caption[] | null {
-    if (!content.startsWith('WEBVTT')) return null
+    const captions: Caption[] = []
+    const blocks = content.split(/\n\s*\n/).slice(1) // Skip WEBVTT header
 
-    const entries = content.split(/\n\s*\n/).slice(1).map(block => {
+    for (const block of blocks) {
       const lines = block.trim().split('\n')
-      if (lines.length < 2) return null
+      if (lines.length < 2) continue
 
-      const timeMatch = lines[0].match(/(\d{2}:\d{2}:\d{2}\.\d{3}) --> (\d{2}:\d{2}:\d{2}\.\d{3})/)
-      if (!timeMatch) return null
+      // Find the line with the timecode
+      const timecodeLine = lines.find(line => line.includes('-->'))
+      if (!timecodeLine) continue
 
-      const startTime = timeToSeconds(timeMatch[1])
-      const endTime = timeToSeconds(timeMatch[2])
-      const text = lines.slice(1).join('\n')
+      const timecode = timecodeLine.match(/(\d{2}:\d{2}:\d{2}\.\d{3}) --> (\d{2}:\d{2}:\d{2}\.\d{3})/)
+      if (!timecode) continue
 
-      return {
+      const startTime = timeToSeconds(timecode[1])
+      const endTime = timeToSeconds(timecode[2])
+
+      // Join and clean text lines, excluding the timecode line
+      const text = cleanSubtitleText(
+        lines.filter(line => line !== timecodeLine && !line.match(/^\d+$/)).join(' ')
+      )
+
+      captions.push({
         id: generateId(),
         startTime,
         endTime,
-        text,
-        isActive: false
-      } as Caption
-    })
+        text
+      })
+    }
 
-    return entries.filter((entry): entry is Caption => entry !== null)
+    return captions.length > 0 ? captions : null
   }
 
   function parseCaptions(fileContent: string): Caption[] | null {
@@ -198,110 +211,135 @@ export const useCaptionsStore = defineStore('captions', () => {
   }
 
   function mergeDuplicates(captions: Caption[]) {
-      const duplicateIndexes: number[] = []
-      
-      for (let i = 0; i < captions.length - 1; i++) {
-        const caption = captions[i]
-        const nextCaption = captions[i + 1]
-        
-      if (caption.text === nextCaption.text && isOverlapping(caption, nextCaption)) {
-          nextCaption.startTime = Math.min(caption.startTime, nextCaption.startTime)
-          nextCaption.endTime = Math.max(caption.endTime, nextCaption.endTime)
-          duplicateIndexes.push(i)
+    const merged: Caption[] = []
+    let lastCaption: Caption | null = null
+
+    for (const caption of captions) {
+      if (!lastCaption) {
+        lastCaption = { ...caption }
+        merged.push(lastCaption)
+        continue
+      }
+
+      // If captions overlap
+      if (caption.startTime <= lastCaption.endTime) {
+        // If it's the same text or a continuation, merge them
+        if (caption.text === lastCaption.text ||
+            lastCaption.text.endsWith('...') ||
+            caption.text.startsWith('...')) {
+          lastCaption.endTime = Math.max(lastCaption.endTime, caption.endTime)
+        } else {
+          // If different text, adjust timing to prevent overlap
+          const gap = 0.1 // 100ms gap between subtitles
+          caption.startTime = lastCaption.endTime + gap
+          if (caption.startTime < caption.endTime) { // Only add if there's still duration
+            lastCaption = { ...caption }
+            merged.push(lastCaption)
+          }
         }
+      } else {
+        lastCaption = { ...caption }
+        merged.push(lastCaption)
       }
+    }
 
-      // Remove duplicates from end to start to avoid index shifting
-      for (let i = duplicateIndexes.length - 1; i >= 0; i--) {
-        captions.splice(duplicateIndexes[i], 1)
-      }
-  }
-
-  function isOverlapping(left: Caption, right: Caption): boolean {
-    const containedDuration = right.endTime - left.startTime
-      const rightDuration = right.endTime - right.startTime
-      return containedDuration > 0.2 || (containedDuration / rightDuration) > 0.3
+    return merged
   }
 
   async function loadCaptions(fileContent: string, language?: string, title?: string) {
-    const parsed = parseCaptions(fileContent)
-      if (!parsed) return
+    try {
+      let captions = parseCaptions(fileContent)
+      if (!captions) return
+
+      // Clean up captions
+      captions = captions.map(caption => ({
+        ...caption,
+        text: cleanSubtitleText(caption.text)
+      }))
+
+      // Sort and merge
+      sortCaptionsByTime(captions)
+      captions = mergeDuplicates(captions)
 
       const { processFurigana } = useFurigana()
 
-    console.log(`[Store] Processing furigana for ${parsed.length} captions, language: ${language || 'unknown'}`)
-    
-    // Add metadata to track
-    const trackInfo = {
-      language: language || 'unknown',
-      title: title || `Track ${subtitleTracks.value.length + 1}`
-    }
-
-    // Check if this track already exists (to prevent duplicates)
-    const isDuplicate = subtitleTracks.value.some(track => 
-      track.metadata.language === trackInfo.language && 
-      track.metadata.title === trackInfo.title &&
-      track.captions.length === parsed.length
-    )
-
-    if (isDuplicate) {
-      console.warn(`[Store] Skipping duplicate subtitle track: ${trackInfo.language} - ${trackInfo.title}`)
-      return
-    }
-
-    // Process furigana and tokens for each caption
-    const processingPromises = parsed.map(async (caption) => {
-      try {
-        // Check if text contains enough Japanese characters to warrant processing
-        if (shouldProcessFurigana(caption.text)) {
-          // Process furigana
-          const furiganaResult = await processFurigana(caption.text)
-          if (furiganaResult && furiganaResult.length > 0) {
-            // Convert from new format { text, furigana } to old format [text, furigana]
-            caption.furigana = furiganaResult.map(item => [
-              item.text, 
-              item.furigana || ''
-            ]) as Array<[string, string]>
-            console.log(`[Store] Furigana processed for caption: "${caption.text.substring(0, 30)}${caption.text.length > 30 ? '...' : ''}"`)
-          } else {
-            console.warn(`[Store] No furigana generated for caption: "${caption.text.substring(0, 30)}${caption.text.length > 30 ? '...' : ''}"`)
-          }
-          
-          // Process tokens for colored display
-          try {
-            const tokens = await tokenize(caption.text)
-            if (tokens && tokens.length > 0) {
-              caption.tokens = tokens
-              console.log(`[Store] Tokens processed for caption: "${caption.text.substring(0, 30)}${caption.text.length > 30 ? '...' : ''}"`)
-            }
-          } catch (tokenError) {
-            console.error(`[Store] Error processing tokens for caption: "${caption.text.substring(0, 30)}${caption.text.length > 30 ? '...' : ''}"`, tokenError)
-          }
-        } else {
-          console.log(`[Store] Skipping furigana for caption with insufficient Japanese characters: "${caption.text.substring(0, 30)}${caption.text.length > 30 ? '...' : ''}"`)
-        }
-      } catch (error) {
-        console.error(`[Store] Error processing caption: "${caption.text.substring(0, 30)}${caption.text.length > 30 ? '...' : ''}"`, error)
+      console.log(`[Store] Processing furigana for ${captions.length} captions, language: ${language || 'unknown'}`)
+      
+      // Add metadata to track
+      const trackInfo = {
+        language: language || 'unknown',
+        title: title || `Track ${subtitleTracks.value.length + 1}`
       }
-    })
-    
-    // Wait for all processing to complete
-    await Promise.all(processingPromises)
-    
-    console.log(`[Store] Caption processing completed for all captions`)
 
-    // Add as a new track with metadata
-    subtitleTracks.value.push({
-      captions: parsed,
-      metadata: trackInfo
-    })
-    
-    // Set as active track if it's the first one
-    if (subtitleTracks.value.length === 1) {
-      activeTrackIndex.value = 0
+      // Check if this track already exists (to prevent duplicates)
+      const isDuplicate = subtitleTracks.value.some(track => 
+        track.metadata.language === trackInfo.language && 
+        track.metadata.title === trackInfo.title &&
+        track.captions.length === captions.length
+      )
+
+      if (isDuplicate) {
+        console.warn(`[Store] Skipping duplicate subtitle track: ${trackInfo.language} - ${trackInfo.title}`)
+        return
+      }
+
+      // Process furigana and tokens for each caption
+      const processingPromises = captions.map(async (caption) => {
+        try {
+          // Check if text contains enough Japanese characters to warrant processing
+          if (shouldProcessFurigana(caption.text)) {
+            // Process furigana
+            const furiganaResult = await processFurigana(caption.text)
+            if (furiganaResult && furiganaResult.length > 0) {
+              // Convert from new format { text, furigana } to old format [text, furigana]
+              caption.furigana = furiganaResult.map(item => [
+                item.text, 
+                item.furigana || ''
+              ]) as Array<[string, string]>
+              console.log(`[Store] Furigana processed for caption: "${caption.text.substring(0, 30)}${caption.text.length > 30 ? '...' : ''}"`)
+            } else {
+              console.warn(`[Store] No furigana generated for caption: "${caption.text.substring(0, 30)}${caption.text.length > 30 ? '...' : ''}"`)
+            }
+            
+            // Process tokens for colored display
+            try {
+              const tokens = await tokenize(caption.text)
+              if (tokens && tokens.length > 0) {
+                caption.tokens = tokens
+                console.log(`[Store] Tokens processed for caption: "${caption.text.substring(0, 30)}${caption.text.length > 30 ? '...' : ''}"`)
+              }
+            } catch (tokenError) {
+              console.error(`[Store] Error processing tokens for caption: "${caption.text.substring(0, 30)}${caption.text.length > 30 ? '...' : ''}"`, tokenError)
+            }
+          } else {
+            console.log(`[Store] Skipping furigana for caption with insufficient Japanese characters: "${caption.text.substring(0, 30)}${caption.text.length > 30 ? '...' : ''}"`)
+          }
+        } catch (error) {
+          console.error(`[Store] Error processing caption: "${caption.text.substring(0, 30)}${caption.text.length > 30 ? '...' : ''}"`, error)
+        }
+      })
+      
+      // Wait for all processing to complete
+      await Promise.all(processingPromises)
+      
+      console.log(`[Store] Caption processing completed for all captions`)
+
+      // Add as a new track with metadata
+      subtitleTracks.value.push({
+        captions: captions,
+        metadata: trackInfo
+      })
+      
+      // Set as active track if it's the first one
+      if (subtitleTracks.value.length === 1) {
+        activeTrackIndex.value = 0
+      }
+      
+      return subtitleTracks.value.length - 1 // Return the index of the newly added track
+    } catch (error) {
+      console.error(`[Store] Error loading captions:`, error)
+      return null
     }
-    
-    return subtitleTracks.value.length - 1 // Return the index of the newly added track
   }
 
   // Clear all subtitle tracks
@@ -399,29 +437,29 @@ export const useCaptionsStore = defineStore('captions', () => {
     setCurrentTime(activeCaptions.value[0].startTime)
   }
 
+  function isOverlapping(left: Caption, right: Caption): boolean {
+    return (left.startTime <= right.endTime && right.startTime <= left.endTime)
+  }
+
   function assignCaptionsToLanes(captions: Caption[]) {
-      for (let i = 0; i < captions.length; i++) {
-        const caption = captions[i]
-      const previousCaptions = findPreviousCaptions(captions, i)
-
-        // Find available lane
-        const takenLanes = previousCaptions
+    captions.forEach((caption, index) => {
+      // Get previous captions that might overlap
+      const previousCaptions = findPreviousCaptions(captions, index)
+      
+      // Find available lane
+      const takenLanes = previousCaptions
         .filter(prev => isOverlapping(prev, caption))
-          .map(c => c.lane)
-          .filter((lane): lane is number => lane !== undefined)
-
-        // Assign first available lane
-        for (let lane = 0; lane < takenLanes.length + 1; lane++) {
-          if (!takenLanes.includes(lane)) {
-            caption.lane = lane
-            break
-          }
-        }
-
-        if (caption.lane === undefined) {
-          caption.lane = 0
-        }
+        .map(c => c.lane)
+        .filter((lane): lane is number => lane !== undefined)
+      
+      // Find first available lane
+      let lane = 0
+      while (takenLanes.includes(lane)) {
+        lane++
       }
+      
+      caption.lane = lane
+    })
   }
 
   function findPreviousCaptions(captions: Caption[], currentIndex: number): Caption[] {

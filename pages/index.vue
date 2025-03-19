@@ -176,15 +176,27 @@ useKeyboardShortcuts({
   'n': () => videoPlayerRef.value?.adjustPlaybackRate(false),
   'PageUp': () => videoControls.skipTime(87), // Skip OP/ED
   'PageDown': () => videoControls.skipTime(-87),
-  '-': () => {
-    settings.subtitleFontSize = Math.max(0.5, settings.subtitleFontSize - 0.1)
-    settings.saveSettings()
-    videoControls.showNotification(`Subtitle size: ${Math.round(settings.subtitleFontSize * 100)}%`)
+  '-': (e: KeyboardEvent) => {
+    if (e.shiftKey) {
+      // Decrease secondary subtitle size
+      settings.adjustFontSize(true, false)
+      videoControls.showNotification(`Secondary subtitle size: ${Math.round(settings.secondarySubtitleFontSize * 100)}%`)
+    } else {
+      // Decrease primary subtitle size
+      settings.adjustFontSize(false, false)
+      videoControls.showNotification(`Subtitle size: ${Math.round(settings.subtitleFontSize * 100)}%`)
+    }
   },
-  '=': () => {
-    settings.subtitleFontSize = Math.min(2, settings.subtitleFontSize + 0.1)
-    settings.saveSettings()
-    videoControls.showNotification(`Subtitle size: ${Math.round(settings.subtitleFontSize * 100)}%`)
+  '=': (e: KeyboardEvent) => {
+    if (e.shiftKey) {
+      // Increase secondary subtitle size
+      settings.adjustFontSize(true, true)
+      videoControls.showNotification(`Secondary subtitle size: ${Math.round(settings.secondarySubtitleFontSize * 100)}%`)
+    } else {
+      // Increase primary subtitle size
+      settings.adjustFontSize(false, true)
+      videoControls.showNotification(`Subtitle size: ${Math.round(settings.subtitleFontSize * 100)}%`)
+    }
   },
   'D': (e: KeyboardEvent) => {
     if (e.shiftKey) {
@@ -204,10 +216,28 @@ useKeyboardShortcuts({
   },
   'h': () => {
     showControls.value = !showControls.value
+    // Toggle Nuxt devtools
+    if (process.client) {
+      const devtools = (window as any).__NUXT_DEVTOOLS_CLIENT__
+      if (devtools) {
+        if (showControls.value) {
+          devtools.enable()
+        } else {
+          devtools.disable()
+        }
+      }
+    }
     if (showControls.value) {
       // Auto-hide controls after 3 seconds
       setTimeout(() => {
         showControls.value = false
+        // Also hide devtools
+        if (process.client) {
+          const devtools = (window as any).__NUXT_DEVTOOLS_CLIENT__
+          if (devtools) {
+            devtools.disable()
+          }
+        }
       }, 3000)
     }
   },

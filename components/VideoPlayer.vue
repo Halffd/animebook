@@ -339,7 +339,8 @@ defineExpose({
               c.startTime <= props.currentTime && props.currentTime <= c.endTime
             )"
             :key="`active-${caption.id}`"
-            class="subtitle-line lane-0 primary-track"
+            class="subtitle-line primary-track"
+            :class="`lane-${caption.lane || 0}`"
           >
             <template v-if="caption.furigana && store.showFurigana">
               <span class="furigana-container" v-html="
@@ -386,7 +387,8 @@ defineExpose({
                 c.startTime <= props.currentTime && props.currentTime <= c.endTime
               )"
               :key="`${track.metadata.language}-${caption.id}`"
-              class="subtitle-line lane-0 secondary-track"
+              class="subtitle-line secondary-track"
+              :class="`lane-${caption.lane || 0}`"
               v-show="store.showSecondarySubtitles"
             >
               <template v-if="caption.furigana && store.showFurigana">
@@ -480,27 +482,27 @@ defineExpose({
 
 .subtitle-line {
   position: relative;
-  display: inline-block;
-  padding: 0.2em 0.5em;
-  margin-bottom: 0.2em;
-  background-color: rgba(0, 0, 0, 0.7);
-  border-radius: 0.25em;
+  display: block;
+  padding: 0.1em 0.5em;  /* Reduced vertical padding */
+  margin: 0 auto;        /* Remove margin-bottom */
   max-width: 80%;
   text-align: center;
   color: white;
-  font-size: 2rem;
-  line-height: 2;
+  font-size: v-bind('`${settings.subtitleFontSize}em`');
+  font-family: v-bind('settings.subtitleFontFamily');
+  font-weight: v-bind('settings.subtitleFontWeight * 1.5');
+  line-height: 1.2;     /* Reduced line height for tighter text */
   text-shadow: 
     0 0 5px rgba(0,0,0,0.9),
-    0 0 10px rgba(0,0,0,0.7);
+    0 0 10px rgba(0,0,0,0.7),
+    0 0 15px rgba(0,0,0,0.5);
   word-wrap: break-word;
   word-break: normal;
-  margin: 0 auto;
 }
 
 .primary-track {
   color: white;
-  font-weight: 600;
+  font-weight: 900; /* Increased from 600 */
   text-shadow: 
     0 0 5px rgba(0,0,0,0.9),
     0 0 10px rgba(0,0,0,0.7),
@@ -513,22 +515,24 @@ defineExpose({
 
 .secondary-track {
   color: #ffeb3b; /* Yellow color for secondary tracks */
-  font-size: 1.6rem;
+  font-size: v-bind('`${settings.secondarySubtitleFontSize}em`');
+  font-family: v-bind('settings.secondarySubtitleFontFamily');
+  font-weight: v-bind('settings.secondarySubtitleFontWeight * 1.5'); /* 50% thicker */
   opacity: 0.9;
   text-shadow: 
     0 0 5px rgba(0,0,0,0.9),
     0 0 8px rgba(0,0,0,0.7);
-  background-color: rgba(0, 0, 0, 0.6);
-  border-radius: 8px;
-  padding: 0.3em 0.5em;
-  margin-top: 0.2em;
-  line-height: 2;
+  padding: 0.2em 0.5em;
+  margin-top: 0.1em; /* Reduced from 0.2em */
+  line-height: 1.5;
 }
 
 .lane-0 { transform: translateY(0); }
-.lane-1 { transform: translateY(-120%); }
-.lane-2 { transform: translateY(-240%); }
-.lane-3 { transform: translateY(-360%); }
+.lane-1 { transform: translateY(-100%); }  /* Adjacent to lane-0 */
+.lane-2 { transform: translateY(-200%); }  /* Adjacent to lane-1 */
+.lane-3 { transform: translateY(-300%); }  /* Adjacent to lane-2 */
+.lane-4 { transform: translateY(-400%); }  /* Adjacent to lane-3 */
+.lane-5 { transform: translateY(-500%); }  /* Adjacent to lane-4 */
 
 /* Video alignment classes */
 .video-container.left {

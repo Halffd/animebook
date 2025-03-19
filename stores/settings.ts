@@ -10,6 +10,11 @@ interface Settings {
   videoAlignment: 'left' | 'center' | 'right'
   showVideoControls: boolean
   subtitleFontSize: number
+  secondarySubtitleFontSize: number
+  subtitleFontFamily: string
+  secondarySubtitleFontFamily: string
+  subtitleFontWeight: number
+  secondarySubtitleFontWeight: number
   regexReplacements: RegexReplacement[]
   regexReplacementsEnabled: boolean
   tokenizationMethod: 'kuromoji' | 'sudachi'
@@ -22,6 +27,11 @@ export const useSettingsStore = defineStore('settings', {
     videoAlignment: 'center',
     showVideoControls: true,
     subtitleFontSize: 1.5,
+    secondarySubtitleFontSize: 1.2,
+    subtitleFontFamily: 'Arial, sans-serif',
+    secondarySubtitleFontFamily: 'Arial, sans-serif',
+    subtitleFontWeight: 600,
+    secondarySubtitleFontWeight: 500,
     regexReplacements: [
       { regex: '\\(\\(.*?\\)\\)', replaceText: '' },
       { regex: '\\(.*?\\)', replaceText: '' },
@@ -80,6 +90,46 @@ export const useSettingsStore = defineStore('settings', {
       } catch (e) {
         console.error('Failed to set tokenization method:', e)
       }
+    },
+
+    adjustFontSize(isSecondary: boolean, increase: boolean) {
+      const step = 0.1
+      const min = 0.5
+      const max = 2.5
+      
+      if (isSecondary) {
+        this.secondarySubtitleFontSize = Math.min(
+          Math.max(this.secondarySubtitleFontSize + (increase ? step : -step), min),
+          max
+        )
+      } else {
+        this.subtitleFontSize = Math.min(
+          Math.max(this.subtitleFontSize + (increase ? step : -step), min),
+          max
+        )
+      }
+      
+      this.saveSettings()
+    },
+
+    adjustFontWeight(isSecondary: boolean, increase: boolean) {
+      const step = 100
+      const min = 100
+      const max = 900
+      
+      if (isSecondary) {
+        this.secondarySubtitleFontWeight = Math.min(
+          Math.max(this.secondarySubtitleFontWeight + (increase ? step : -step), min),
+          max
+        )
+      } else {
+        this.subtitleFontWeight = Math.min(
+          Math.max(this.subtitleFontWeight + (increase ? step : -step), min),
+          max
+        )
+      }
+      
+      this.saveSettings()
     }
   }
 }) 

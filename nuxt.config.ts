@@ -7,6 +7,10 @@ export default defineNuxtConfig({
     '@pinia/nuxt'
   ],
 
+  devtools: {
+    enabled: false
+  },
+
   typescript: {
     strict: true,
     typeCheck: true,
