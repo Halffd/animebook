@@ -21,23 +21,33 @@ const props = defineProps<{
   videoUrl: string
   captions: Caption[]
   currentTime: number
+  duration: number
+  tracks?: { src: string; kind: string; srclang: string; label: string }[]
   onAudioTrackChange?: (track: number) => void
   videoAlignment?: 'left' | 'center' | 'right'
 }>()
 
 const emit = defineEmits<{
-  'timeupdate': [time: number]
-  'error': [error: Error]
-  'notify': [message: string]
-  'audio-track-change': [track: number]
-  'playing': []
-  'pause': []
+  (e: 'timeupdate', time: number): void
+  (e: 'error', error: Error): void
+  (e: 'notify', message: string): void
+  (e: 'audio-track-change', track: number): void
+  (e: 'playing'): void
+  (e: 'pause'): void
+  (e: 'videoEnd'): void
 }>()
 
 const videoRef = ref<HTMLVideoElement>()
 const store = useCaptionsStore()
 const settings = useSettingsStore()
 const videoControls = useVideoControls()
+const progressBarRef = ref<HTMLElement>()
+const isPlaying = ref(false)
+const isMuted = ref(false)
+const showCaptions = ref(false)
+const isFullscreen = ref(false)
+const showControls = ref(true)
+let controlsTimer: number | null = null
 
 interface AudioTrack {
   enabled: boolean
@@ -77,8 +87,13 @@ const captionsUrl = computed(() => {
 })
 
 // Convert video URL to streaming endpoint URL
-const streamingUrl = computed(() => {
+const videoSrc = computed(() => {
   if (!props.videoUrl) return ''
+  // If it's a blob URL, use it directly
+  if (props.videoUrl.startsWith('blob:')) {
+    return props.videoUrl
+  }
+  // Otherwise encode it for the streaming endpoint
   return `/api/videos/stream/${encodeURIComponent(props.videoUrl)}`
 })
 
@@ -115,36 +130,9 @@ watch(() => props.currentTime, (newTime) => {
   }
 })
 
-function onTimeUpdate(e: Event) {
-  const video = e.target as HTMLVideoElement
-  emit('timeupdate', video.currentTime)
-
-  // Handle auto-pause - only if explicitly enabled
-  if (store.isAutoPauseMode) {
-    // Get active captions from the active track only
-    const activeTrackCaptions = store.activeTrack?.captions.filter(caption => 
-      caption.startTime <= video.currentTime && 
-      video.currentTime <= caption.endTime
-    ) || []
-    
-    // Only pause if we have active captions and the video time exceeds the end time
-    if (activeTrackCaptions.length > 0) {
-      const lastCaption = activeTrackCaptions[activeTrackCaptions.length - 1]
-      
-      // Only pause if we've just passed the end time (within 0.1 seconds)
-      // Also check if we haven't just paused recently (within 1 second)
-      const timeSinceLastPause = store.lastPauseTime ? video.currentTime - store.lastPauseTime : Infinity
-      
-      if (video.currentTime > lastCaption.endTime && 
-          video.currentTime < lastCaption.endTime + 0.1 && 
-          !video.paused &&
-          timeSinceLastPause > 1.0) {
-        console.log(`[Player] Auto-pausing at ${video.currentTime}, caption end: ${lastCaption.endTime}`)
-        video.pause()
-        store.lastPauseTime = video.currentTime
-      }
-    }
-  }
+function onTimeUpdate() {
+  if (!videoRef.value) return
+  emit('timeupdate', videoRef.value.currentTime)
 }
 
 function onError(e: Event) {
@@ -394,6 +382,23 @@ onMounted(() => {
       }
     }
   })
+
+  if (videoRef.value) {
+    videoRef.value.addEventListener('play', () => {
+      emit('playing')
+      isPlaying.value = true
+    })
+    videoRef.value.addEventListener('pause', () => {
+      emit('pause')
+      isPlaying.value = false
+    })
+  }
+
+  document.addEventListener('fullscreenchange', () => {
+    isFullscreen.value = !!document.fullscreenElement
+  })
+
+  startControlsTimer()
 })
 
 onUnmounted(() => {
@@ -411,6 +416,14 @@ onUnmounted(() => {
   if (captionsUrl.value) {
     URL.revokeObjectURL(captionsUrl.value)
   }
+
+  if (controlsTimer) {
+    clearTimeout(controlsTimer)
+  }
+
+  document.removeEventListener('fullscreenchange', () => {
+    isFullscreen.value = !!document.fullscreenElement
+  })
 })
 
 // Watch for video URL changes
@@ -516,10 +529,16 @@ function isJapaneseText(text: string): boolean {
   return totalChars > 0 && (japaneseCount / totalChars) >= 0.4
 }
 
-const isPlaying = ref(false)
-const isMuted = ref(false)
-const progress = ref(0)
-const progressBar = ref<HTMLElement | null>(null)
+const progress = computed(() => {
+  if (!props.duration) return 0
+  return (props.currentTime / props.duration) * 100
+})
+
+function formatTime(seconds: number): string {
+  const mins = Math.floor(seconds / 60)
+  const secs = Math.floor(seconds % 60)
+  return `${mins}:${secs.toString().padStart(2, '0')}`
+}
 
 function toggleMute() {
   if (!videoRef.value) return
@@ -527,153 +546,100 @@ function toggleMute() {
   isMuted.value = videoRef.value.muted
 }
 
-function onProgressClick(event: MouseEvent) {
-  if (!videoRef.value || !progressBar.value) return
-  const rect = progressBar.value.getBoundingClientRect()
+function toggleCaptions() {
+  if (!videoRef.value) return
+  const tracks = Array.from(videoRef.value.textTracks)
+  showCaptions.value = !showCaptions.value
+  tracks.forEach(track => {
+    track.mode = showCaptions.value ? 'showing' : 'hidden'
+  })
+}
+
+async function toggleFullscreen() {
+  if (!videoRef.value) return
+  
+  if (!document.fullscreenElement) {
+    await videoRef.value.requestFullscreen()
+    isFullscreen.value = true
+  } else {
+    await document.exitFullscreen()
+    isFullscreen.value = false
+  }
+}
+
+function onProgressBarClick(event: MouseEvent) {
+  if (!videoRef.value || !progressBarRef.value) return
+  const rect = progressBarRef.value.getBoundingClientRect()
   const pos = (event.clientX - rect.left) / rect.width
-  videoRef.value.currentTime = pos * videoRef.value.duration
+  if (props.duration) {
+    videoRef.value.currentTime = pos * props.duration
+  }
+}
+
+function onMouseMove() {
+  showControls.value = true
+  startControlsTimer()
+}
+
+function startControlsTimer() {
+  if (controlsTimer) {
+    clearTimeout(controlsTimer)
+  }
+  controlsTimer = window.setTimeout(() => {
+    showControls.value = false
+  }, 3000)
 }
 </script>
 
 <template>
   <div 
     class="video-container" 
-    :class="{ 
-      'center': settings.videoAlignment === 'center',
-      'left': settings.videoAlignment === 'left',
-      'right': settings.videoAlignment === 'right',
-      'has-subtitles': store.allActiveCaptions.length > 0,
-      'controls-hidden': settings.hidePlayerControls && !isHovering
-    }"
+    :class="{ 'controls-hidden': !showControls }"
+    @mousemove="onMouseMove"
+    @mouseleave="startControlsTimer"
   >
     <video
       ref="videoRef"
-      :src="streamingUrl"
-      :controls="settings.showVideoControls"
+      class="video-element"
+      :src="videoSrc"
       @timeupdate="onTimeUpdate"
-      @play="onPlay"
-      @pause="onPause"
-      @seeking="onSeeking"
-      @seeked="onSeeked"
-      @mouseover="isHovering = true"
-      @mouseleave="isHovering = false"
+      @ended="$emit('videoEnd')"
+      @click="togglePlay"
     >
-      Your browser does not support the video tag.
+      <track
+        v-for="(track, index) in tracks"
+        :key="index"
+        :src="track.src"
+        :kind="track.kind"
+        :srclang="track.srclang"
+        :label="track.label"
+      />
     </video>
 
-    <!-- Audio track indicator -->
-    <div 
-      v-if="audioTracks.length > 1"
-      class="fixed top-4 right-4 bg-black/50 px-3 py-2 rounded text-white text-sm z-40"
-    >
-      Audio: {{ selectedAudioTrack + 1 }}/{{ audioTracks.length }}
-    </div>
-
-    <!-- Subtitle tracks indicator - toggleable with showSubtitleInfo -->
-    <div 
-      v-if="showSubtitleInfo && store.subtitleTracks.length > 1"
-      class="fixed top-12 right-4 bg-black/50 px-3 py-2 rounded text-white text-sm z-40"
-    >
-      <div>Subtitles: {{ store.activeTrackIndex + 1 }}/{{ store.subtitleTracks.length }}</div>
-      <div v-if="store.activeTrack?.metadata" class="text-xs mt-1">
-        {{ store.activeTrack.metadata.language }}: {{ store.activeTrack.metadata.title }}
-      </div>
-    </div>
-
-    <!-- All subtitle tracks -->
-    <div 
-      v-if="hasSubtitles"
-      class="subtitles-container"
-      :style="{
-        fontSize: `calc(${settings.primarySubtitleFontSize} * 1.5rem)`
-      }"
-    >
-      <!-- Stack all captions from all tracks -->
-      <div class="subtitle-stack">
-        <!-- Active track first -->
-        <div class="subtitle-track active-track">
-          <div
-            v-for="caption in store.activeCaptions.filter(c => 
-              c.startTime <= props.currentTime && props.currentTime <= c.endTime
-            )"
-            :key="`active-${caption.id}`"
-            class="subtitle-line primary-track"
-            :class="[
-              `lane-${caption.lane || 0}`,
-              processText(caption.text).position || 'middle'
-            ]"
-          >
-            <template v-if="caption.furigana && store.showFurigana">
-              <span class="furigana-container" v-html="
-                caption.furigana.map(([text, reading]) => {
-                  const processed = processText(text);
-                  if (/^[\s\p{P}]+$/u.test(processed.text)) {
-                    return processed.text;
-                  } else if (/[\u4E00-\u9FAF\u3400-\u4DBF]/.test(processed.text) && reading && reading !== processed.text) {
-                    return `<ruby>${processed.text}<rt>${reading}</rt></ruby>`;
-                  } else {
-                    return processed.text;
-                  }
-                }).join('')
-              "></span>
-            </template>
-            <template v-else-if="caption.tokens && (settings.colorizeWords || (settings.autoColorizeJapanese && isJapaneseText(caption.text)))">
-              <span class="tokens-container">
-                <ColoredWord
-                  v-for="(token, index) in processTokens(caption.tokens)"
-                  :key="`${caption.id}-token-${index}`"
-                  :text="processText(token.surface_form).text"
-                  :reading="token.reading"
-                  :pos="token.pos"
-                />
-              </span>
-            </template>
-            <template v-else>
-              <span v-html="processText(caption.text).text"></span>
-            </template>
-          </div>
-        </div>
-        
-        <!-- Secondary subtitles directly in stack -->
-        <div
-          v-for="(track, trackIndex) in store.subtitleTracks.filter((_, i) => i !== store.activeTrackIndex)"
-          :key="`track-${trackIndex}`"
-          class="subtitle-track"
-        >
-          <div
-            v-for="caption in track.captions.filter(c => 
-              c.startTime <= props.currentTime && props.currentTime <= c.endTime
-            )"
-            :key="`${track.metadata.language}-${caption.id}`"
-            class="subtitle-line secondary-track"
-            :class="`lane-${caption.lane || 0}`"
-            v-show="store.showSecondarySubtitles"
-          >
-            <span v-html="processText(caption.text).text"></span>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Custom controls -->
     <div class="custom-controls">
-      <div class="flex items-center gap-2">
-        <button class="control-button" @click="togglePlay">
-          <span v-if="isPlaying">⏸</span>
-          <span v-else>▶</span>
-        </button>
-        
-        <div class="flex-1">
-          <div class="progress-bar" ref="progressBar" @click="onProgressClick">
-            <div class="progress-fill" :style="{ width: `${progress}%` }"></div>
-            <div class="progress-hover"></div>
-          </div>
+      <div class="flex items-center justify-between mb-2">
+        <div class="flex items-center gap-2">
+          <button class="control-button" @click="togglePlay">
+            <i class="fas" :class="isPlaying ? 'fa-pause' : 'fa-play'"></i>
+          </button>
+          <button class="control-button" @click="toggleMute">
+            <i class="fas" :class="isMuted ? 'fa-volume-mute' : 'fa-volume-up'"></i>
+          </button>
+          <span class="text-white text-sm">{{ formatTime(currentTime) }} / {{ formatTime(duration) }}</span>
         </div>
+        <div class="flex items-center gap-2">
+          <button v-if="tracks?.length" class="control-button" @click="toggleCaptions">
+            <i class="fas" :class="showCaptions ? 'fa-closed-captioning' : 'fa-closed-captioning text-gray-500'"></i>
+          </button>
+          <button class="control-button" @click="toggleFullscreen">
+            <i class="fas" :class="isFullscreen ? 'fa-compress' : 'fa-expand'"></i>
+          </button>
+        </div>
+      </div>
 
-        <button class="control-button" @click="toggleMute">
-          <span v-if="isMuted">🔇</span>
-          <span v-else>🔊</span>
-        </button>
+      <div class="progress-bar" ref="progressBarRef" @click="onProgressBarClick">
+        <div class="progress-fill" :style="{ width: `${progress}%` }"></div>
+        <div class="progress-hover"></div>
       </div>
     </div>
   </div>
@@ -692,15 +658,48 @@ function onProgressClick(event: MouseEvent) {
   overflow: hidden;
 }
 
-.video-container.controls-hidden video::-webkit-media-controls {
+/* Hide all native controls when controls are hidden */
+.controls-hidden video::-webkit-media-controls {
   display: none !important;
 }
 
-.video-container.controls-hidden video::-webkit-media-controls-enclosure {
+.controls-hidden video::-webkit-media-controls-enclosure {
   display: none !important;
 }
 
-.video-container.controls-hidden video::-webkit-media-controls-panel {
+.controls-hidden video::-webkit-media-controls-panel {
+  display: none !important;
+}
+
+.controls-hidden video::-webkit-media-controls-overlay-play-button {
+  display: none !important;
+}
+
+.controls-hidden video::-webkit-media-controls-play-button {
+  display: none !important;
+}
+
+.controls-hidden video::-webkit-media-controls-timeline {
+  display: none !important;
+}
+
+.controls-hidden video::-webkit-media-controls-current-time-display {
+  display: none !important;
+}
+
+.controls-hidden video::-webkit-media-controls-time-remaining-display {
+  display: none !important;
+}
+
+.controls-hidden video::-webkit-media-controls-mute-button {
+  display: none !important;
+}
+
+.controls-hidden video::-webkit-media-controls-volume-slider {
+  display: none !important;
+}
+
+.controls-hidden video::-webkit-media-controls-fullscreen-button {
   display: none !important;
 }
 
@@ -880,17 +879,45 @@ function onProgressClick(event: MouseEvent) {
   bottom: 0;
   left: 0;
   right: 0;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.7));
   padding: 1rem;
-  background: linear-gradient(transparent, rgba(0,0,0,0.7));
   opacity: 0;
   transition: opacity 0.3s ease;
   pointer-events: none;
 }
 
-/* Show controls when container is hovered */
-.video-container:hover .custom-controls {
+/* Show controls on hover */
+.video-container:hover .custom-controls,
+.custom-controls:hover {
   opacity: 1;
   pointer-events: auto;
+}
+
+/* Progress bar */
+.progress-bar {
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.2);
+  cursor: pointer;
+  position: relative;
+  margin-top: 0.5rem;
+}
+
+.progress-fill {
+  height: 100%;
+  background: #3b82f6;
+  position: absolute;
+  top: 0;
+  left: 0;
+  transition: width 0.1s linear;
+}
+
+.progress-hover {
+  position: absolute;
+  top: -8px;
+  bottom: -8px;
+  left: 0;
+  right: 0;
 }
 
 /* Control buttons */
@@ -906,30 +933,5 @@ function onProgressClick(event: MouseEvent) {
 
 .control-button:hover {
   opacity: 1;
-}
-
-/* Progress bar */
-.progress-bar {
-  width: 100%;
-  height: 4px;
-  background: rgba(255,255,255,0.2);
-  margin-top: 0.5rem;
-  cursor: pointer;
-  position: relative;
-}
-
-.progress-fill {
-  height: 100%;
-  background: #3b82f6;
-  width: 0%;
-  transition: width 0.1s linear;
-}
-
-.progress-hover {
-  position: absolute;
-  top: -8px;
-  bottom: -8px;
-  left: 0;
-  right: 0;
 }
 </style> 

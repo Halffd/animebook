@@ -17,6 +17,7 @@ const showControls = ref(false)
 const selectedVideo = ref<VideoInfo | null>(null)
 const playlist = ref<VideoInfo[]>([])
 const currentPlaylistIndex = ref(-1)
+const duration = ref(0)
 
 const captionsStore = useCaptionsStore()
 const showHelp = ref(false)
@@ -346,7 +347,9 @@ function onVideoEnd() {
         :video-url="selectedVideo.path"
         :captions="captionsStore.captions"
         :current-time="captionsStore.currentTime"
+        :duration="duration"
         @timeupdate="captionsStore.setCurrentTime"
+        @loadedmetadata="duration = $event.target.duration"
         @error="error = $event.message"
         @notify="videoControls.showNotification"
         @audio-track-change="onAudioTrackChange"
