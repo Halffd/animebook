@@ -100,10 +100,10 @@ function setActiveTab(tab: TabType) {
                   <input
                     type="radio"
                     v-model="settings.videoAlignment"
-                    value="top"
+                    value="left"
                     class="mr-2"
                   >
-                  Top
+                  Left
                 </label>
                 <label class="inline-flex items-center">
                   <input
@@ -114,20 +114,100 @@ function setActiveTab(tab: TabType) {
                   >
                   Center
                 </label>
+                <label class="inline-flex items-center">
+                  <input
+                    type="radio"
+                    v-model="settings.videoAlignment"
+                    value="right"
+                    class="mr-2"
+                  >
+                  Right
+                </label>
               </div>
             </div>
 
             <div>
-              <h3 class="text-lg mb-2">Subtitle Font Size</h3>
-              <input
-                type="range"
-                v-model="settings.subtitleFontSize"
-                min="0.5"
-                max="2"
-                step="0.1"
-                class="w-64"
-              >
-              <span class="ml-2">{{ Math.round(settings.subtitleFontSize * 100) }}%</span>
+              <h3 class="text-lg mb-2">Primary Subtitle Style</h3>
+              <div class="space-y-4">
+                <div>
+                  <label class="block text-sm mb-1">Font Size</label>
+                  <div class="flex items-center gap-2">
+                    <input
+                      type="range"
+                      v-model="settings.primarySubtitleFontSize"
+                      min="0.5"
+                      max="2.5"
+                      step="0.1"
+                      class="w-64"
+                    >
+                    <span class="ml-2">{{ Math.round(settings.primarySubtitleFontSize * 100) }}%</span>
+                  </div>
+                </div>
+                
+                <div>
+                  <label class="block text-sm mb-1">Font Family</label>
+                  <input
+                    v-model="settings.subtitleFontFamily"
+                    class="w-64 bg-gray-800 px-3 py-1 rounded"
+                    placeholder="Arial, sans-serif"
+                  >
+                </div>
+                
+                <div>
+                  <label class="block text-sm mb-1">Font Weight</label>
+                  <select
+                    v-model="settings.subtitleFontWeight"
+                    class="w-64 bg-gray-800 px-3 py-1 rounded"
+                  >
+                    <option value="400">Normal (400)</option>
+                    <option value="500">Medium (500)</option>
+                    <option value="600">Semi-Bold (600)</option>
+                    <option value="700">Bold (700)</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <h3 class="text-lg mb-2">Secondary Subtitle Style</h3>
+              <div class="space-y-4">
+                <div>
+                  <label class="block text-sm mb-1">Font Size</label>
+                  <div class="flex items-center gap-2">
+                    <input
+                      type="range"
+                      v-model="settings.secondarySubtitleFontSize"
+                      min="0.5"
+                      max="2.5"
+                      step="0.1"
+                      class="w-64"
+                    >
+                    <span class="ml-2">{{ Math.round(settings.secondarySubtitleFontSize * 100) }}%</span>
+                  </div>
+                </div>
+                
+                <div>
+                  <label class="block text-sm mb-1">Font Family</label>
+                  <input
+                    v-model="settings.secondarySubtitleFontFamily"
+                    class="w-64 bg-gray-800 px-3 py-1 rounded"
+                    placeholder="Arial, sans-serif"
+                  >
+                </div>
+                
+                <div>
+                  <label class="block text-sm mb-1">Font Weight</label>
+                  <select
+                    v-model="settings.secondarySubtitleFontWeight"
+                    class="w-64 bg-gray-800 px-3 py-1 rounded"
+                  >
+                    <option value="400">Normal (400)</option>
+                    <option value="500">Medium (500)</option>
+                    <option value="600">Semi-Bold (600)</option>
+                    <option value="700">Bold (700)</option>
+                  </select>
+                </div>
+              </div>
             </div>
 
             <div>

@@ -26,6 +26,11 @@ export const useCaptionsStore = defineStore('captions', () => {
   const showFurigana = ref(true)
   const isSidebarVisible = ref(true)
 
+  // Add subtitle delay state
+  const primarySubtitleDelay = ref(0)
+  const secondarySubtitleDelay = ref(0)
+  const customOffsets = ref<Record<string, number>>({})
+
   const activeCaptions = computed(() => {
     return captions.value.filter(caption => 
       activeCaptionIds.value.includes(caption.id)
@@ -36,28 +41,20 @@ export const useCaptionsStore = defineStore('captions', () => {
   const allActiveCaptions = computed(() => {
     const active: Caption[] = []
     
-    // First add captions from the active track
-    if (activeTrackIndex.value >= 0 && activeTrackIndex.value < subtitleTracks.value.length) {
-      const activeTrackCaptions = subtitleTracks.value[activeTrackIndex.value].captions.filter(caption => 
-        caption.startTime <= currentTime.value && 
-        currentTime.value <= caption.endTime
-      )
-      active.push(...activeTrackCaptions)
-    }
-    
-    // Then add captions from secondary tracks if enabled
+    // Process each track
     subtitleTracks.value.forEach((track, index) => {
-      // Skip the active track as we've already added its captions
-      if (index === activeTrackIndex.value) return
+      // Determine which delay to use based on whether this is the primary track
+      const delay = index === activeTrackIndex.value ? primarySubtitleDelay.value : secondarySubtitleDelay.value
       
       // Find captions that would be active at current time
-      const secondaryCaptions = track.captions.filter(caption => 
-        caption.startTime <= currentTime.value && 
-        currentTime.value <= caption.endTime
-      )
+      const trackCaptions = track.captions.filter(caption => {
+        const totalDelay = (caption.customOffset || 0) + delay
+        return caption.startTime <= (currentTime.value - totalDelay) && 
+               (currentTime.value - totalDelay) <= caption.endTime
+      })
       
       // Add them to the active captions list
-      active.push(...secondaryCaptions)
+      active.push(...trackCaptions)
     })
     
     return active
@@ -517,6 +514,33 @@ export const useCaptionsStore = defineStore('captions', () => {
       return `${pad(hours)}:${pad(minutes)}:${pad(secs)},${pad(ms)}`
     }
 
+  // Function to set custom offset for a specific caption
+  function setCustomOffset(captionId: string, offset: number) {
+    customOffsets.value[captionId] = offset
+    
+    // Update the caption in all tracks
+    subtitleTracks.value.forEach(track => {
+      const caption = track.captions.find(c => c.id === captionId)
+      if (caption) {
+        caption.customOffset = offset
+      }
+    })
+  }
+
+  // Function to adjust subtitle delay
+  function adjustSubtitleDelay(isSecondary: boolean, increase: boolean) {
+    const step = 0.1 // 100ms step
+    if (isSecondary) {
+      secondarySubtitleDelay.value += increase ? step : -step
+      // Clamp the value between -200 and 200
+      secondarySubtitleDelay.value = Math.max(-200, Math.min(200, secondarySubtitleDelay.value))
+    } else {
+      primarySubtitleDelay.value += increase ? step : -step
+      // Clamp the value between -200 and 200
+      primarySubtitleDelay.value = Math.max(-200, Math.min(200, primarySubtitleDelay.value))
+    }
+  }
+
   return {
     captions,
     subtitleTracks,
@@ -552,6 +576,11 @@ export const useCaptionsStore = defineStore('captions', () => {
     assignCaptionsToLanes,
     findPreviousCaptions,
     downloadSubtitles,
-    formatSrtTime
+    formatSrtTime,
+    primarySubtitleDelay,
+    secondarySubtitleDelay,
+    customOffsets,
+    adjustSubtitleDelay,
+    setCustomOffset,
   }
 }) 

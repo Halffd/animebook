@@ -184,19 +184,25 @@ useKeyboardShortcuts({
     } else {
       // Decrease primary subtitle size
       settings.adjustFontSize(false, false)
-      videoControls.showNotification(`Subtitle size: ${Math.round(settings.subtitleFontSize * 100)}%`)
+      videoControls.showNotification(`Primary subtitle size: ${Math.round(settings.primarySubtitleFontSize * 100)}%`)
     }
   },
   '=': (e: KeyboardEvent) => {
-    if (e.shiftKey) {
-      // Increase secondary subtitle size
-      settings.adjustFontSize(true, true)
-      videoControls.showNotification(`Secondary subtitle size: ${Math.round(settings.secondarySubtitleFontSize * 100)}%`)
-    } else {
+    if (!e.shiftKey) {
       // Increase primary subtitle size
       settings.adjustFontSize(false, true)
-      videoControls.showNotification(`Subtitle size: ${Math.round(settings.subtitleFontSize * 100)}%`)
+      videoControls.showNotification(`Primary subtitle size: ${Math.round(settings.primarySubtitleFontSize * 100)}%`)
     }
+  },
+  '[': (e: KeyboardEvent) => {
+    // Decrease secondary subtitle size
+    settings.adjustFontSize(true, false)
+    videoControls.showNotification(`Secondary subtitle size: ${Math.round(settings.secondarySubtitleFontSize * 100)}%`)
+  },
+  ']': (e: KeyboardEvent) => {
+    // Increase secondary subtitle size
+    settings.adjustFontSize(true, true)
+    videoControls.showNotification(`Secondary subtitle size: ${Math.round(settings.secondarySubtitleFontSize * 100)}%`)
   },
   'D': (e: KeyboardEvent) => {
     if (e.shiftKey) {

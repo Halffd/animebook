@@ -9,7 +9,7 @@ interface RegexReplacement {
 interface Settings {
   videoAlignment: 'left' | 'center' | 'right'
   showVideoControls: boolean
-  subtitleFontSize: number
+  primarySubtitleFontSize: number
   secondarySubtitleFontSize: number
   subtitleFontFamily: string
   secondarySubtitleFontFamily: string
@@ -26,7 +26,7 @@ export const useSettingsStore = defineStore('settings', {
   state: (): Settings => ({
     videoAlignment: 'center',
     showVideoControls: true,
-    subtitleFontSize: 1.5,
+    primarySubtitleFontSize: 1.5,
     secondarySubtitleFontSize: 1.2,
     subtitleFontFamily: 'Arial, sans-serif',
     secondarySubtitleFontFamily: 'Arial, sans-serif',
@@ -103,8 +103,8 @@ export const useSettingsStore = defineStore('settings', {
           max
         )
       } else {
-        this.subtitleFontSize = Math.min(
-          Math.max(this.subtitleFontSize + (increase ? step : -step), min),
+        this.primarySubtitleFontSize = Math.min(
+          Math.max(this.primarySubtitleFontSize + (increase ? step : -step), min),
           max
         )
       }

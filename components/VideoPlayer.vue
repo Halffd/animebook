@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { ref, watch, computed, onUnmounted } from 'vue'
+import { ref, watch, computed, onUnmounted, onMounted } from 'vue'
 import type { Caption } from '~/types'
 import { useCaptionsStore } from '~/stores/captions'
 import { useSettingsStore } from '~/stores/settings'
+import { useKeyboardShortcuts } from '~/composables/useKeyboardShortcuts'
+import { useVideoControls } from '~/composables/useVideoControls'
 
 interface HTMLVideoElementWithAudioTracks extends HTMLVideoElement {
   audioTracks?: {
@@ -35,6 +37,7 @@ const emit = defineEmits<{
 const videoRef = ref<HTMLVideoElement>()
 const store = useCaptionsStore()
 const settings = useSettingsStore()
+const videoControls = useVideoControls()
 
 interface AudioTrack {
   enabled: boolean
@@ -278,6 +281,133 @@ defineExpose({
   adjustPlaybackRate,
   toggleSubtitleInfo
 })
+
+// Video control functions
+let lastSpaceTime = 0
+const SPACE_DELAY = 200 // 200ms delay between space presses
+
+function togglePlay() {
+  const video = videoRef.value
+  if (!video) return
+  
+  const now = Date.now()
+  if (now - lastSpaceTime < SPACE_DELAY) {
+    return // Ignore if pressed too recently
+  }
+  lastSpaceTime = now
+  
+  if (video.paused) {
+    video.play()
+  } else {
+    video.pause()
+  }
+}
+
+function skipTime(seconds: number) {
+  const video = videoRef.value
+  if (!video) return
+  
+  video.currentTime += seconds
+}
+
+function increasePlaybackRate() {
+  adjustPlaybackRate(true)
+}
+
+function decreasePlaybackRate() {
+  adjustPlaybackRate(false)
+}
+
+function exportCurrentCaption() {
+  const activeCaptions = store.activeCaptions.filter(c => 
+    c.startTime <= props.currentTime && props.currentTime <= c.endTime
+  )
+  
+  if (activeCaptions.length > 0) {
+    const caption = activeCaptions[0]
+    navigator.clipboard.writeText(caption.text)
+    emit('notify', 'Caption copied to clipboard')
+  }
+}
+
+// Keyboard shortcuts
+onMounted(() => {
+  useKeyboardShortcuts({
+    ' ': () => togglePlay(),
+    'ArrowLeft': () => store.previousCaption(),
+    'ArrowRight': () => store.nextCaption(),
+    'a': () => store.previousCaption(),
+    'd': () => store.nextCaption(),
+    's': () => store.seekToSubtitleStart(),
+    'ArrowDown': () => store.seekToSubtitleStart(),
+    'w': () => store.toggleAutoPause(),
+    'ArrowUp': () => store.toggleAutoPause(),
+    'p': () => store.isAutoPauseMode = false,
+    'c': () => store.toggleSecondarySubtitles(),
+    'v': () => store.toggleSubtitles(),
+    'V': () => store.toggleSubtitles(), // Shift+V
+    'f': () => store.toggleFurigana(),
+    'g': () => settings.colorizeWords = !settings.colorizeWords,
+    'i': () => store.toggleSidebar(),
+    'x': () => store.toggleSidebar(),
+    't': () => cycleAudioTrack(),
+    'y': () => store.cycleActiveTrack(),
+    'h': () => settings.toggleRegexReplacements(),
+    'e': () => exportCurrentCaption(),
+    'PageUp': () => skipTime(87),
+    'PageDown': () => skipTime(-87),
+    'm': () => increasePlaybackRate(),
+    'n': () => decreasePlaybackRate(),
+    '=': () => settings.adjustFontSize(false, true),
+    '-': () => settings.adjustFontSize(false, false),
+    '+': () => settings.adjustFontSize(false, true),
+    '_': () => settings.adjustFontSize(false, false),
+    ']': () => settings.adjustFontSize(true, true),
+    '[': () => settings.adjustFontSize(true, false),
+    '}': () => settings.adjustFontSize(true, true),
+    '{': () => settings.adjustFontSize(true, false),
+  })
+
+  window.addEventListener('keydown', (e: KeyboardEvent) => {
+    // Subtitle delay adjustments
+    if (e.key === 'z' || e.key === 'x') {
+      e.preventDefault()
+      const isIncrease = e.key === 'x'
+      if (e.shiftKey) {
+        // Secondary subtitle delay
+        store.adjustSubtitleDelay(true, isIncrease)
+        videoControls.showNotification(`Secondary subtitle delay: ${store.secondarySubtitleDelay.toFixed(1)}s`)
+      } else {
+        // Primary subtitle delay
+        store.adjustSubtitleDelay(false, isIncrease)
+        videoControls.showNotification(`Primary subtitle delay: ${store.primarySubtitleDelay.toFixed(1)}s`)
+      }
+    }
+
+    // Frame navigation
+    if (e.key === ',' || e.key === '.') {
+      e.preventDefault()
+      if (e.key === ',') {
+        previousFrame()
+      } else {
+        nextFrame()
+      }
+    }
+  })
+})
+
+const FRAME_DURATION = 1/30 // Assuming 30fps video
+
+// Add frame navigation functions
+function nextFrame() {
+  if (!videoRef.value) return
+  skipTime(FRAME_DURATION)
+}
+
+function previousFrame() {
+  if (!videoRef.value) return
+  skipTime(-FRAME_DURATION)
+}
 </script>
 
 <template>
@@ -325,7 +455,7 @@ defineExpose({
       v-if="hasSubtitles"
       class="subtitles-container"
       :style="{
-        fontSize: `calc(${settings.subtitleFontSize} * 1.5rem)`
+        fontSize: `calc(${settings.primarySubtitleFontSize} * 1.5rem)`
       }"
     >
       <!-- Stack all captions from all tracks -->
@@ -433,7 +563,6 @@ defineExpose({
   flex-direction: column;
   width: 100%;
   position: relative;
-  gap: 0.01em; /* Add space between subtitle lines */
 }
 
 .subtitle-track {
@@ -459,9 +588,6 @@ defineExpose({
   max-width: 80%;
   text-align: center;
   color: white;
-  font-size: v-bind('`${settings.subtitleFontSize}em`');
-  font-family: v-bind('settings.subtitleFontFamily');
-  font-weight: v-bind('settings.subtitleFontWeight * 1.5');
   line-height: 1.2;
   text-shadow: 
     0 0 5px rgba(0,0,0,0.9),
@@ -472,24 +598,17 @@ defineExpose({
 }
 
 .primary-track {
-  color: white;
-  font-weight: 900; /* Increased from 600 */
-  text-shadow: 
-    0 0 5px rgba(0,0,0,0.9),
-    0 0 10px rgba(0,0,0,0.7),
-    0 0 15px rgba(0,0,0,0.5);
+  font-size: v-bind('`${settings.primarySubtitleFontSize}em`');
+  font-family: v-bind('settings.subtitleFontFamily');
+  font-weight: v-bind('settings.subtitleFontWeight * 1.5');
+  margin-bottom: 0.5em;
 }
 
 .secondary-track {
-  color: #ffeb3b;
   font-size: v-bind('`${settings.secondarySubtitleFontSize}em`');
   font-family: v-bind('settings.secondarySubtitleFontFamily');
   font-weight: v-bind('settings.secondarySubtitleFontWeight * 1.5');
   opacity: 0.9;
-  text-shadow: 
-    0 0 5px rgba(0,0,0,0.9),
-    0 0 8px rgba(0,0,0,0.7);
-  margin-top: 0.2em; /* Add small space above secondary subtitles */
 }
 
 /* Lane positioning */
