@@ -49,6 +49,7 @@ const audioTracks = ref<AudioTrack[]>([])
 const selectedAudioTrack = ref<number>(0)
 const playbackRate = ref(1)
 const showSubtitleInfo = ref(false)
+const isHovering = ref(false)
 
 // Update hasSubtitles to use allActiveCaptions instead of activeCaptions
 const hasSubtitles = computed(() => store.showSubtitles && store.allActiveCaptions.length > 0)
@@ -73,6 +74,12 @@ const captionsUrl = computed(() => {
   const vttContent = generateWebVTT(props.captions)
   const blob = new Blob([vttContent], { type: 'text/vtt' })
   return URL.createObjectURL(blob)
+})
+
+// Convert video URL to streaming endpoint URL
+const streamingUrl = computed(() => {
+  if (!props.videoUrl) return ''
+  return `/api/videos/stream/${encodeURIComponent(props.videoUrl)}`
 })
 
 // Helper function to generate WebVTT content
@@ -209,8 +216,46 @@ function toggleSubtitleInfo() {
   emit('notify', `Subtitle info: ${showSubtitleInfo.value ? 'ON' : 'OFF'}`)
 }
 
-// Apply regex replacements when showing subtitles
-function processText(text: string): string {
+// Add ASS tag processing function
+function processAssText(text: string): { text: string, position?: string } {
+  // Extract ASS tags
+  const assTagRegex = /\{([^}]+)\}/g
+  let position = 'middle' // Default position
+  
+  // Process ASS tags
+  text = text.replace(assTagRegex, (match, tags) => {
+    // Handle \an tags
+    const anMatch = tags.match(/\\an?(\d)/)
+    if (anMatch) {
+      const anValue = parseInt(anMatch[1])
+      switch (anValue) {
+        case 1: position = 'bottom-left'; break;
+        case 2: position = 'bottom'; break;
+        case 3: position = 'bottom-right'; break;
+        case 4: position = 'middle-left'; break;
+        case 5: position = 'middle'; break;
+        case 6: position = 'middle-right'; break;
+        case 7: position = 'top-left'; break;
+        case 8: position = 'top'; break;
+        case 9: position = 'top-right'; break;
+      }
+    }
+    
+    // Handle SVG tags
+    if (tags.includes('\\p1')) {
+      // Keep SVG drawing commands
+      return match
+    }
+    
+    // Remove other ASS tags
+    return ''
+  })
+  
+  return { text, position }
+}
+
+// Update processText function
+function processText(text: string): { text: string, position?: string } {
   // First apply regex replacements if enabled
   let processed = text
   if (settings.regexReplacementsEnabled && settings.regexReplacements.length) {
@@ -223,35 +268,35 @@ function processText(text: string): string {
     }, processed)
   }
   
+  // Process ASS tags and get positioning
+  const { text: cleanText, position } = processAssText(processed)
+  processed = cleanText
+  
   // Remove SRT/ASS HTML tags that shouldn't be displayed
-  // This includes font tags, b tags, i tags, etc.
   processed = processed
-    .replace(/<\/?font[^>]*>/gi, '') // Remove font tags
-    .replace(/<\/?b>/gi, '') // Remove bold tags
-    .replace(/<\/?i>/gi, '') // Remove italic tags
-    .replace(/<\/?u>/gi, '') // Remove underline tags
-    .replace(/<\/?s>/gi, '') // Remove strike tags
-    .replace(/&lt;/g, '<') // Replace &lt; with <
-    .replace(/&gt;/g, '>') // Replace &gt; with >
-    .replace(/&amp;/g, '&') // Replace &amp; with &
+    .replace(/<\/?font[^>]*>/gi, '')
+    .replace(/<\/?b>/gi, '')
+    .replace(/<\/?i>/gi, '')
+    .replace(/<\/?u>/gi, '')
+    .replace(/<\/?s>/gi, '')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
   
   // Check if text contains Japanese characters
   const japaneseMatches = processed.match(/[\u3000-\u303f\u3040-\u309f\u30a0-\u30ff\uff00-\uff9f\u4e00-\u9faf\u3400-\u4dbf]/g)
   const japaneseCount = japaneseMatches ? japaneseMatches.length : 0
-  const totalChars = processed.replace(/\s/g, '').length // Ignore whitespace
-  const isJapanese = totalChars > 0 && (japaneseCount / totalChars) >= 0.4 // 40% threshold
+  const totalChars = processed.replace(/\s/g, '').length
+  const isJapanese = totalChars > 0 && (japaneseCount / totalChars) >= 0.4
   
   if (!isJapanese) {
-    // Fix common ASS subtitle formatting issues:
-    // 1. Replace multiple spaces with a single space
-    // 2. Ensure there's a space after punctuation if followed by a letter
     processed = processed
       .replace(/\s+/g, ' ')
       .replace(/([.!?,:;])([a-zA-Z])/g, '$1 $2')
       .trim()
   }
   
-  return processed
+  return { text: processed, position }
 }
 
 // Process tokens for colored display
@@ -268,70 +313,25 @@ function processTokens(tokens: any[]): any[] {
   })
 }
 
-// Clean up blob URLs when component is unmounted
-onUnmounted(() => {
-  if (captionsUrl.value) {
-    URL.revokeObjectURL(captionsUrl.value)
-  }
-})
+// Add position saving
+let savePositionInterval: number | null = null
 
-// Expose methods to parent
-defineExpose({
-  cycleAudioTrack,
-  adjustPlaybackRate,
-  toggleSubtitleInfo
-})
-
-// Video control functions
-let lastSpaceTime = 0
-const SPACE_DELAY = 200 // 200ms delay between space presses
-
-function togglePlay() {
-  const video = videoRef.value
-  if (!video) return
-  
-  const now = Date.now()
-  if (now - lastSpaceTime < SPACE_DELAY) {
-    return // Ignore if pressed too recently
-  }
-  lastSpaceTime = now
-  
-  if (video.paused) {
-    video.play()
-  } else {
-    video.pause()
-  }
-}
-
-function skipTime(seconds: number) {
-  const video = videoRef.value
-  if (!video) return
-  
-  video.currentTime += seconds
-}
-
-function increasePlaybackRate() {
-  adjustPlaybackRate(true)
-}
-
-function decreasePlaybackRate() {
-  adjustPlaybackRate(false)
-}
-
-function exportCurrentCaption() {
-  const activeCaptions = store.activeCaptions.filter(c => 
-    c.startTime <= props.currentTime && props.currentTime <= c.endTime
-  )
-  
-  if (activeCaptions.length > 0) {
-    const caption = activeCaptions[0]
-    navigator.clipboard.writeText(caption.text)
-    emit('notify', 'Caption copied to clipboard')
-  }
-}
-
-// Keyboard shortcuts
 onMounted(() => {
+  // Restore saved position
+  if (videoRef.value && props.videoUrl) {
+    const savedPosition = settings.getVideoPosition(props.videoUrl)
+    if (savedPosition > 0) {
+      videoRef.value.currentTime = savedPosition
+    }
+  }
+
+  // Save position periodically
+  savePositionInterval = window.setInterval(() => {
+    if (videoRef.value && props.videoUrl) {
+      settings.saveVideoPosition(props.videoUrl, videoRef.value.currentTime)
+    }
+  }, 5000) // Save every 5 seconds
+
   useKeyboardShortcuts({
     ' ': () => togglePlay(),
     'ArrowLeft': () => store.previousCaption(),
@@ -396,6 +396,89 @@ onMounted(() => {
   })
 })
 
+onUnmounted(() => {
+  // Save final position
+  if (videoRef.value && props.videoUrl) {
+    settings.saveVideoPosition(props.videoUrl, videoRef.value.currentTime)
+  }
+
+  // Clear interval
+  if (savePositionInterval) {
+    clearInterval(savePositionInterval)
+    savePositionInterval = null
+  }
+
+  if (captionsUrl.value) {
+    URL.revokeObjectURL(captionsUrl.value)
+  }
+})
+
+// Watch for video URL changes
+watch(() => props.videoUrl, (newUrl) => {
+  if (videoRef.value && newUrl) {
+    const savedPosition = settings.getVideoPosition(newUrl)
+    if (savedPosition > 0) {
+      videoRef.value.currentTime = savedPosition
+    }
+  }
+})
+
+// Expose methods to parent
+defineExpose({
+  cycleAudioTrack,
+  adjustPlaybackRate,
+  toggleSubtitleInfo
+})
+
+// Video control functions
+let lastSpaceTime = 0
+const SPACE_DELAY = 200 // 200ms delay between space presses
+
+function togglePlay() {
+  const video = videoRef.value
+  if (!video) return
+  
+  const now = Date.now()
+  if (now - lastSpaceTime < SPACE_DELAY) {
+    return // Ignore if pressed too recently
+  }
+  lastSpaceTime = now
+  
+  if (video.paused) {
+    video.play()
+  } else {
+    video.pause()
+  }
+}
+
+function skipTime(seconds: number) {
+  const video = videoRef.value
+  if (!video) return
+  
+  video.currentTime += seconds
+}
+
+function increasePlaybackRate() {
+  adjustPlaybackRate(true)
+}
+
+function decreasePlaybackRate() {
+  adjustPlaybackRate(false)
+}
+
+function exportCurrentCaption() {
+  const activeCaptions = store.activeCaptions.filter(c => 
+    c.startTime <= props.currentTime && props.currentTime <= c.endTime
+  )
+  
+  if (activeCaptions.length > 0) {
+    const caption = activeCaptions[0]
+    navigator.clipboard.writeText(caption.text)
+    emit('notify', 'Caption copied to clipboard')
+  }
+}
+
+// Keyboard shortcuts
 const FRAME_DURATION = 1/30 // Assuming 30fps video
 
 // Add frame navigation functions
@@ -408,28 +491,75 @@ function previousFrame() {
   if (!videoRef.value) return
   skipTime(-FRAME_DURATION)
 }
+
+const onPlay = () => {
+  emit('playing')
+}
+
+const onPause = () => {
+  emit('pause')
+}
+
+const onSeeking = () => {
+  // Handle seeking state
+}
+
+const onSeeked = () => {
+  // Handle seeked state
+}
+
+// Add helper function to detect Japanese text
+function isJapaneseText(text: string): boolean {
+  const japaneseMatches = text.match(/[\u3000-\u303f\u3040-\u309f\u30a0-\u30ff\uff00-\uff9f\u4e00-\u9faf\u3400-\u4dbf]/g)
+  const japaneseCount = japaneseMatches ? japaneseMatches.length : 0
+  const totalChars = text.replace(/\s/g, '').length
+  return totalChars > 0 && (japaneseCount / totalChars) >= 0.4
+}
+
+const isPlaying = ref(false)
+const isMuted = ref(false)
+const progress = ref(0)
+const progressBar = ref<HTMLElement | null>(null)
+
+function toggleMute() {
+  if (!videoRef.value) return
+  videoRef.value.muted = !videoRef.value.muted
+  isMuted.value = videoRef.value.muted
+}
+
+function onProgressClick(event: MouseEvent) {
+  if (!videoRef.value || !progressBar.value) return
+  const rect = progressBar.value.getBoundingClientRect()
+  const pos = (event.clientX - rect.left) / rect.width
+  videoRef.value.currentTime = pos * videoRef.value.duration
+}
 </script>
 
 <template>
   <div 
-    class="video-container"
-    :class="[
-      videoAlignment || settings.videoAlignment,
-      { 'has-subtitles': hasSubtitles }
-    ]"
+    class="video-container" 
+    :class="{ 
+      'center': settings.videoAlignment === 'center',
+      'left': settings.videoAlignment === 'left',
+      'right': settings.videoAlignment === 'right',
+      'has-subtitles': store.allActiveCaptions.length > 0,
+      'controls-hidden': settings.hidePlayerControls && !isHovering
+    }"
   >
     <video
       ref="videoRef"
-      class="video-element"
-      :src="videoUrl"
-      controls
-      disablepictureinpicture
+      :src="streamingUrl"
+      :controls="settings.showVideoControls"
       @timeupdate="onTimeUpdate"
-      @error="onError"
-      @loadedmetadata="onLoad"
-      @playing="$emit('playing')"
-      @pause="$emit('pause')"
-    />
+      @play="onPlay"
+      @pause="onPause"
+      @seeking="onSeeking"
+      @seeked="onSeeked"
+      @mouseover="isHovering = true"
+      @mouseleave="isHovering = false"
+    >
+      Your browser does not support the video tag.
+    </video>
 
     <!-- Audio track indicator -->
     <div 
@@ -468,35 +598,38 @@ function previousFrame() {
             )"
             :key="`active-${caption.id}`"
             class="subtitle-line primary-track"
-            :class="`lane-${caption.lane || 0}`"
+            :class="[
+              `lane-${caption.lane || 0}`,
+              processText(caption.text).position || 'middle'
+            ]"
           >
             <template v-if="caption.furigana && store.showFurigana">
               <span class="furigana-container" v-html="
                 caption.furigana.map(([text, reading]) => {
-                  const processedText = processText(text);
-                  if (/^[\s\p{P}]+$/u.test(processedText)) {
-                    return processedText;
-                  } else if (/[\u4E00-\u9FAF\u3400-\u4DBF]/.test(processedText) && reading && reading !== processedText) {
-                    return `<ruby>${processedText}<rt>${reading}</rt></ruby>`;
+                  const processed = processText(text);
+                  if (/^[\s\p{P}]+$/u.test(processed.text)) {
+                    return processed.text;
+                  } else if (/[\u4E00-\u9FAF\u3400-\u4DBF]/.test(processed.text) && reading && reading !== processed.text) {
+                    return `<ruby>${processed.text}<rt>${reading}</rt></ruby>`;
                   } else {
-                    return processedText;
+                    return processed.text;
                   }
                 }).join('')
               "></span>
             </template>
-            <template v-else-if="caption.tokens && settings.colorizeWords">
+            <template v-else-if="caption.tokens && (settings.colorizeWords || (settings.autoColorizeJapanese && isJapaneseText(caption.text)))">
               <span class="tokens-container">
                 <ColoredWord
                   v-for="(token, index) in processTokens(caption.tokens)"
                   :key="`${caption.id}-token-${index}`"
-                  :text="processText(token.surface_form)"
+                  :text="processText(token.surface_form).text"
                   :reading="token.reading"
                   :pos="token.pos"
                 />
               </span>
             </template>
             <template v-else>
-              <span v-html="processText(caption.text)"></span>
+              <span v-html="processText(caption.text).text"></span>
             </template>
           </div>
         </div>
@@ -516,9 +649,31 @@ function previousFrame() {
             :class="`lane-${caption.lane || 0}`"
             v-show="store.showSecondarySubtitles"
           >
-            <span v-html="processText(caption.text)"></span>
+            <span v-html="processText(caption.text).text"></span>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- Custom controls -->
+    <div class="custom-controls">
+      <div class="flex items-center gap-2">
+        <button class="control-button" @click="togglePlay">
+          <span v-if="isPlaying">⏸</span>
+          <span v-else>▶</span>
+        </button>
+        
+        <div class="flex-1">
+          <div class="progress-bar" ref="progressBar" @click="onProgressClick">
+            <div class="progress-fill" :style="{ width: `${progress}%` }"></div>
+            <div class="progress-hover"></div>
+          </div>
+        </div>
+
+        <button class="control-button" @click="toggleMute">
+          <span v-if="isMuted">🔇</span>
+          <span v-else>🔊</span>
+        </button>
       </div>
     </div>
   </div>
@@ -535,6 +690,18 @@ function previousFrame() {
   justify-content: center;
   background: black;
   overflow: hidden;
+}
+
+.video-container.controls-hidden video::-webkit-media-controls {
+  display: none !important;
+}
+
+.video-container.controls-hidden video::-webkit-media-controls-enclosure {
+  display: none !important;
+}
+
+.video-container.controls-hidden video::-webkit-media-controls-panel {
+  display: none !important;
 }
 
 .video-element {
@@ -687,5 +854,82 @@ function previousFrame() {
   white-space: normal;
   word-wrap: break-word;
   word-break: normal;
+}
+
+/* ASS positioning classes */
+.top-left { text-align: left; transform: translateY(-200%); }
+.top { text-align: center; transform: translateY(-200%); }
+.top-right { text-align: right; transform: translateY(-200%); }
+.middle-left { text-align: left; }
+.middle { text-align: center; }
+.middle-right { text-align: right; }
+.bottom-left { text-align: left; transform: translateY(200%); }
+.bottom { text-align: center; transform: translateY(200%); }
+.bottom-right { text-align: right; transform: translateY(200%); }
+
+/* Support for ASS SVG drawings */
+.subtitle-line :deep(svg) {
+  width: 100%;
+  height: auto;
+  max-height: 50vh;
+}
+
+/* Custom controls container */
+.custom-controls {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 1rem;
+  background: linear-gradient(transparent, rgba(0,0,0,0.7));
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+}
+
+/* Show controls when container is hovered */
+.video-container:hover .custom-controls {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Control buttons */
+.control-button {
+  background: transparent;
+  border: none;
+  color: white;
+  padding: 0.5rem;
+  cursor: pointer;
+  opacity: 0.8;
+  transition: opacity 0.2s;
+}
+
+.control-button:hover {
+  opacity: 1;
+}
+
+/* Progress bar */
+.progress-bar {
+  width: 100%;
+  height: 4px;
+  background: rgba(255,255,255,0.2);
+  margin-top: 0.5rem;
+  cursor: pointer;
+  position: relative;
+}
+
+.progress-fill {
+  height: 100%;
+  background: #3b82f6;
+  width: 0%;
+  transition: width 0.1s linear;
+}
+
+.progress-hover {
+  position: absolute;
+  top: -8px;
+  bottom: -8px;
+  left: 0;
+  right: 0;
 }
 </style> 

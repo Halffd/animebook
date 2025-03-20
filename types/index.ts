@@ -5,6 +5,13 @@ export interface Token {
   pos: string
 }
 
+export interface VideoInfo {
+  name: string
+  path: string
+  size: number
+  lastModified: number
+}
+
 export interface Tokenizer {
   tokenize(text: string): Token[]
 }

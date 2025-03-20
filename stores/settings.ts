@@ -19,7 +19,10 @@ interface Settings {
   regexReplacementsEnabled: boolean
   tokenizationMethod: 'kuromoji' | 'sudachi'
   colorizeWords: boolean
+  autoColorizeJapanese: boolean
   hideControlButtons: boolean
+  hidePlayerControls: boolean
+  videoPositions: Record<string, number>
 }
 
 export const useSettingsStore = defineStore('settings', {
@@ -40,7 +43,10 @@ export const useSettingsStore = defineStore('settings', {
     regexReplacementsEnabled: true,
     tokenizationMethod: 'kuromoji',
     colorizeWords: false,
-    hideControlButtons: false
+    autoColorizeJapanese: true,
+    hideControlButtons: false,
+    hidePlayerControls: true,
+    videoPositions: {}
   }),
 
   actions: {
@@ -129,6 +135,20 @@ export const useSettingsStore = defineStore('settings', {
         )
       }
       
+      this.saveSettings()
+    },
+
+    saveVideoPosition(videoPath: string, position: number) {
+      this.videoPositions[videoPath] = position
+      this.saveSettings()
+    },
+
+    getVideoPosition(videoPath: string): number {
+      return this.videoPositions[videoPath] || 0
+    },
+
+    clearVideoPosition(videoPath: string) {
+      delete this.videoPositions[videoPath]
       this.saveSettings()
     }
   }

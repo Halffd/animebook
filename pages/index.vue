@@ -7,13 +7,16 @@ import HelpDialog from '~/components/HelpDialog.vue'
 import { useVideoControls } from '~/composables/useVideoControls'
 import { useAnkiExport } from '~/composables/useAnkiExport'
 import { useAnkiExtension } from '~/composables/useAnkiExtension'
-import type { Caption } from '~/types'
+import type { Caption, VideoInfo } from '~/types'
 import { useRoute } from 'vue-router'
 
 const videoUrl = ref<string | null>(null)
 const error = ref<string | null>(null)
 const isPlaying = ref(false)
 const showControls = ref(false)
+const selectedVideo = ref<VideoInfo | null>(null)
+const playlist = ref<VideoInfo[]>([])
+const currentPlaylistIndex = ref(-1)
 
 const captionsStore = useCaptionsStore()
 const showHelp = ref(false)
@@ -169,8 +172,11 @@ useKeyboardShortcuts({
   },
   't': () => videoPlayerRef.value?.cycleAudioTrack(),
   'y': () => {
-    captionsStore.cycleActiveTrack()
-    videoControls.showNotification(`Subtitle Track: ${captionsStore.activeTrackIndex + 1}/${captionsStore.subtitleTracks.length}`)
+    if (captionsStore.activeCaptions.length > 0) {
+      const text = captionsStore.activeCaptions.map(caption => caption.text).join('\n')
+      navigator.clipboard.writeText(text)
+      videoControls.showNotification('Subtitles copied to clipboard')
+    }
   },
   'm': () => videoPlayerRef.value?.adjustPlaybackRate(true),
   'n': () => videoPlayerRef.value?.adjustPlaybackRate(false),
@@ -305,6 +311,26 @@ const handleFileSelect = async (event: Event) => {
     }
   }
 }
+
+function onVideoSelect(video: VideoInfo) {
+  selectedVideo.value = video
+  playlist.value = [video]
+  currentPlaylistIndex.value = 0
+}
+
+function onPlaylistSelect(videos: VideoInfo[]) {
+  playlist.value = videos
+  currentPlaylistIndex.value = 0
+  selectedVideo.value = videos[0]
+}
+
+function onVideoEnd() {
+  // Play next video in playlist if available
+  if (playlist.value.length > currentPlaylistIndex.value + 1) {
+    currentPlaylistIndex.value++
+    selectedVideo.value = playlist.value[currentPlaylistIndex.value]
+  }
+}
 </script>
 
 <template>
@@ -313,26 +339,29 @@ const handleFileSelect = async (event: Event) => {
     @drop.prevent="onFilesDrop"
     @dragover.prevent
   >
-    <VideoPlayer
-      v-if="videoUrl"
-      ref="videoPlayerRef"
-      :video-url="videoUrl"
-      :captions="captionsStore.captions"
-      :current-time="captionsStore.currentTime"
-      @timeupdate="captionsStore.setCurrentTime"
-      @error="error = $event.message"
-      @notify="videoControls.showNotification"
-      @audio-track-change="onAudioTrackChange"
-      @playing="isPlaying = true"
-      @pause="isPlaying = false"
-      class="flex-1"
-    />
-
-    <div v-else class="flex-1 flex items-center justify-center">
-      <div class="text-center p-8 text-xl">
-        Drop video and subtitle files here
-      </div>
-    </div>
+    <template v-if="selectedVideo">
+      <VideoPlayer
+        v-if="selectedVideo"
+        ref="videoPlayerRef"
+        :video-url="selectedVideo.path"
+        :captions="captionsStore.captions"
+        :current-time="captionsStore.currentTime"
+        @timeupdate="captionsStore.setCurrentTime"
+        @error="error = $event.message"
+        @notify="videoControls.showNotification"
+        @audio-track-change="onAudioTrackChange"
+        @playing="isPlaying = true"
+        @pause="isPlaying = false"
+        @ended="onVideoEnd"
+        class="flex-1"
+      />
+    </template>
+    <template v-else>
+      <VideoList 
+        @select="onVideoSelect"
+        @playlist="onPlaylistSelect"
+      />
+    </template>
 
     <div v-if="error" class="fixed top-4 left-4 text-red-500 bg-black/50 px-4 py-2 rounded z-40">
       {{ error }}
