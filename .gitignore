@@ -3,6 +3,9 @@ extension/bg/node_modules/
 npm-debug.log
 yarn-error.log
 .vscode
+.idea
+node_modules
+.history
 
 # Editor directories and files
 .idea
