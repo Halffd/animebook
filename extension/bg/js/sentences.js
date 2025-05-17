@@ -1,7 +1,7 @@
 class SentenceFormatter {
     constructor(settings) {
         this.settings = settings;
-        console.log(setting)
+        console.log(settings)
     }
 
     updateLines(lines) {

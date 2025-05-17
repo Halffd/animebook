@@ -23,6 +23,7 @@ function main() {
     document.addEventListener('selectionchange', e => selectionHighlighter.onSelectionChange());
     document.addEventListener('keydown', e => handleKeyDown(e, cardCreator));
 
+    console.log('AnimeBook frontend loaded');
     const fileInput = document.getElementById("ab-file-browse-input")
     if (fileInput) {
         fileInput.addEventListener("change", e => {

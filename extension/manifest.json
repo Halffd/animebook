@@ -61,7 +61,7 @@
                 "bg/background.html",
                 "fg/frontend.css"
             ],
-            "matches": ["file://*/*", "https://*/*"]
+            "matches": ["file://*/*", "https://*/*", "http://*/*"]
         }
     ],
     "content_security_policy": {

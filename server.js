@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
-
+import open from 'open';
 /**
  * Retrieves and validates the port number from command-line arguments.
  * @param {number} [defaultPort=5555] - The default port number to use if no valid port is provided.
@@ -51,5 +51,7 @@ const port = getPort();
 
 // Start the server
 app.listen(port, () => {
-  console.log(`Server is running on port ${port}`);
+    const url = `http://localhost:${port}`
+    console.log(`Server is running on ${url}`);
+    open(url)
 }); 

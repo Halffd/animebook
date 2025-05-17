@@ -6,6 +6,8 @@ yarn-error.log
 .idea
 node_modules
 .history
+*.cert
+*.key
 
 # Editor directories and files
 .idea
