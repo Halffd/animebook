@@ -30,30 +30,59 @@ var analyzeFurigana = async function (text, mode = 'A') {
 }
 
 var furiganas = function (captions) {
-    console.log(captions);
+    // Handle case where captions is undefined or not an array
+    if (!captions || !Array.isArray(captions) || captions.length === 0) {
+        console.warn('Invalid captions provided to furiganas function:', captions);
+        return captions;
+    }
+    
+    console.log('Processing captions for furigana:', captions);
     let ts = []
     for (let i in captions) {
         let caption = captions[i]
+        if (!caption || !caption.text) continue;
+        
         let text = caption.text
         console.log(i, text, caption);
         ts.push(text)
     }
+    
+    // If no valid texts were found, return the original captions
+    if (ts.length === 0) {
+        console.warn('No valid text found in captions for furigana processing');
+        return captions;
+    }
+    
     analyzeFurigana(ts).then((arr) => {
-        console.log(arr);
+        console.log('Furigana analysis result:', arr);
+        if (!arr || arr.length === 0) return;
+        
         for (let i in arr) {
+            if (i >= captions.length) break;
+            
             let caption = arr[i]
-            caption.text = `<ruby>`
+            if (!caption) continue;
+            
+            let rubyText = `<ruby>`;
             for (let t of arr) {
+                if (!t || t.length < 2) continue;
+                
                 let kj = t[0]
                 let kn = t[1]
                 kn = kj == kn ? '' : kn
-                caption.text += `${kj}<rt>${kn}</rt>`
+                rubyText += `${kj}<rt>${kn}</rt>`
             }
-            captions[i].text += `</ruby>`
+            rubyText += `</ruby>`;
+            
+            if (captions[i]) {
+                captions[i].text = rubyText;
+            }
         }
-    })
-    //document.body.insertAdjacentHTML('beforeend', captions[0].text)
-    return captions
+    }).catch(err => {
+        console.error('Error processing furigana:', err);
+    });
+    
+    return captions;
 }
 function createApp() {
     var Utils = {
@@ -176,13 +205,33 @@ function createApp() {
     })
 
     Vue.component('caption-bar', {
-        props: ['captions', 'customOffsets', 'isAutoPauseMode', 'isOffsetMode', 'currentTime'],
+        props: ['captions', 'captionSources', 'activeCaptionSource', 'customOffsets', 'isAutoPauseMode', 'isOffsetMode', 'currentTime'],
         methods: {
             selectCaption: function (caption, offset) {
                 this.$emit('select-caption', caption, offset)
             },
             setCustomOffset: function (caption, offset) {
                 this.$emit('set-custom-offset', caption, offset)
+            },
+            switchSource: function(sourceId) {
+                console.log('Switching to source:', sourceId);
+                this.$emit('switch-source', sourceId);
+            },
+            getSourceName: function(sourceId) {
+                // Extract a readable name from the source ID
+                // Remove file extension and path
+                var name = sourceId;
+                if (name.includes('/')) {
+                    name = name.split('/').pop();
+                }
+                if (name.includes('\\')) {
+                    name = name.split('\\').pop();
+                }
+                // Remove file extension
+                if (name.lastIndexOf('.') > 0) {
+                    name = name.substring(0, name.lastIndexOf('.'));
+                }
+                return name;
             }
         },
         data: function () {
@@ -200,9 +249,49 @@ function createApp() {
         },
         template: `
         <div id="sidebar-captions" class="sidebar-captions">
+          <style>
+            .subtitle-tabs {
+              display: flex;
+              background-color: var(--bw-150);
+              border-bottom: 1px solid var(--bw-300);
+              overflow-x: auto;
+              white-space: nowrap;
+            }
+            
+            .subtitle-tab {
+              padding: 8px 16px;
+              cursor: pointer;
+              color: var(--tab-fg-color);
+              background-color: var(--tab-bg-color);
+              transition: background-color 0.2s, color 0.2s;
+              border-right: 1px solid var(--bw-200);
+              user-select: none;
+            }
+            
+            .subtitle-tab:hover {
+              background-color: var(--tab-hover-bg-color);
+              color: var(--tab-hover-fg-color);
+            }
+            
+            .subtitle-tab.active {
+              background-color: var(--tab-active-bg-color);
+              color: var(--tab-active-fg-color);
+              font-weight: bold;
+            }
+          </style>
+          <div class="subtitle-tabs" v-if="captionSources.length > 1">
+            <div 
+              v-for="sourceId in captionSources" 
+              :key="sourceId"
+              :class="['subtitle-tab', {'active': sourceId === activeCaptionSource}]"
+              @click="switchSource(sourceId)"
+            >
+              {{ getSourceName(sourceId) }}
+            </div>
+          </div>
           <div class="captions-container">
             <div class="captions-list" lang="ja">
-              <span v-for="(caption, index) in captions" class="caption-controls" :key="caption.id">
+              <span v-if="activeCaptionSource && captions[activeCaptionSource]" v-for="(caption, index) in captions[activeCaptionSource]" class="caption-controls" :key="caption.id">
                 <caption-item 
                 @select-caption="selectCaption"
                 @set-custom-offset="setCustomOffset"
@@ -229,6 +318,8 @@ function createApp() {
             videoFileName: null,
             subtitlesFileName: null,
             activeCaptionIds: [],
+            activeCaptionSource: null,
+            captionSources: [],
             currentTime: 0.0,
             shouldShowVideoError: false,
             videoErrorMessage: null,
@@ -239,7 +330,7 @@ function createApp() {
             sideBarDragDx: 0,
             sideBarX: 0.86,
             previousSideBarX: 0.86,
-            captions: [],
+            captions: {},
             isDraggingFile: false,
             isOffsetMode: false,
             resizeBarClick: null,
@@ -300,10 +391,31 @@ function createApp() {
                         this.subtitlesError = null;
                         return null;
                     }
-                    this.captions = captions;
-                    console.log(captions);
-                    this.furigana()
-                    var uri = "data:text/vtt;charset=utf-8," + encodeURIComponent(vtt)
+                    
+                    // Create a unique source ID for this subtitle file
+                    var sourceId = this.subtitlesFileName || ('subtitle_' + Date.now());
+                    
+                    // Add to captions map if it doesn't exist
+                    if (!this.captions[sourceId]) {
+                        // Add to sources list if it's a new source
+                        if (this.captionSources.indexOf(sourceId) === -1) {
+                            this.captionSources.push(sourceId);
+                        }
+                        
+                        // Set as active source if none is selected
+                        if (!this.activeCaptionSource) {
+                            this.activeCaptionSource = sourceId;
+                        }
+                    }
+                    
+                    // Store captions in the map
+                    this.$set(this.captions, sourceId, captions);
+                    console.log(this.captions);
+                    
+                    // Apply furigana to the current captions
+                    this.furigana(sourceId);
+                    
+                    var uri = "data:text/vtt;charset=utf-8," + encodeURIComponent(vtt);
                     this.shouldShowSubtitlesError = false;
                     this.subtitlesError = null;
                     return uri;
@@ -315,13 +427,28 @@ function createApp() {
             },
             captionsMap: function () {
                 var map = {};
-                this.captions.forEach(function (c) { map[c.id] = c; })
+                if (this.activeCaptionSource && this.captions[this.activeCaptionSource]) {
+                    this.captions[this.activeCaptionSource].forEach(function (c) { map[c.id] = c; });
+                }
+                return map;
+            },
+            allCaptionsMap: function () {
+                var map = {};
+                var self = this;
+                Object.keys(this.captions).forEach(function(sourceId) {
+                    self.captions[sourceId].forEach(function(c) {
+                        map[c.id] = c;
+                    });
+                });
                 return map;
             },
             activeCaptions: function () {
                 if (this.autoPauseCaptions.length > 0)
                     return this.autoPauseCaptions;
-
+                
+                if (!this.activeCaptionSource || !this.captions[this.activeCaptionSource]) 
+                    return [];
+                    
                 return this.idsToCaptions(this.activeCaptionIds);
             },
             isVoicedTime: function () {
@@ -336,28 +463,115 @@ function createApp() {
                 if (!this.activeCaptions || !this.captions || !this.captionsMap || !this.isVoicedTime)
                     return [];
 
+                // Get active captions from the current source
                 var active = this.activeCaptions;
                 var activeLanes = active.map(function (c) { return c.lane; });
                 var captionsWithUniqueLanes = active.filter(function (c, i) { return activeLanes.indexOf(c.lane) === i });
                 captionsWithUniqueLanes.sort(this.compareByLane);
-                return captionsWithUniqueLanes;
+                
+                // Get active captions from all sources (except the current one)
+                var allCaptions = [];
+                var self = this;
+                var time = this.currentTime;
+                var buffer = this.captionBackwardMoveBufferSeconds;
+                
+                // Function to check if a caption is active at the current time
+                var isActive = function(caption) {
+                    return caption.startTime < time && time < caption.endTime + buffer;
+                };
+                
+                // Add captions from other sources
+                this.captionSources.forEach(function(sourceId) {
+                    // Skip the active source as we've already processed it
+                    if (sourceId === self.activeCaptionSource) return;
+                    
+                    // Get captions from this source that are active at the current time
+                    if (self.captions[sourceId]) {
+                        var sourceCaptions = self.captions[sourceId].filter(isActive);
+                        if (sourceCaptions.length > 0) {
+                            // Add source information to the captions
+                            sourceCaptions.forEach(function(caption) {
+                                caption.sourceId = sourceId;
+                            });
+                            allCaptions = allCaptions.concat(sourceCaptions);
+                        }
+                    }
+                });
+                
+                // Combine captions from all sources
+                var result = captionsWithUniqueLanes.concat(allCaptions);
+                return result;
             },
             displayedLines: function () {
                 if (!this.shownCaptions || !this.shouldShowMainCaption)
                     return "";
 
                 var lines = [];
-                this.shownCaptions.forEach(function (caption) {
-                    var linesToAdd = caption.neededNewlines - lines.length;
-                    for (var i = 0; i < linesToAdd; i++) {
-                        lines.unshift("");
+                var self = this;
+                
+                // Group captions by source
+                var captionsBySource = {};
+                this.shownCaptions.forEach(function(caption) {
+                    // Make sure we have a valid caption
+                    if (!caption) return;
+                    
+                    // Get the source ID (use the active source if none is specified)
+                    var sourceId = caption.sourceId || self.activeCaptionSource;
+                    if (!sourceId) return;
+                    
+                    // Initialize the array for this source if needed
+                    if (!captionsBySource[sourceId]) {
+                        captionsBySource[sourceId] = [];
                     }
-                    var captionLines = caption.text.split("\n");
-                    if (captionLines.length > 0) {
-                        captionLines[0] = "\n" + captionLines[0]
-                        captionLines[captionLines.length - 1] = captionLines[captionLines.length - 1] + "\n"
+                    
+                    // Add the caption to its source group
+                    captionsBySource[sourceId].push(caption);
+                });
+                
+                // Process captions from each source
+                Object.keys(captionsBySource).forEach(function(sourceId) {
+                    var sourceCaptions = captionsBySource[sourceId];
+                    if (!sourceCaptions || sourceCaptions.length === 0) return;
+                    
+                    // Sort by lane to ensure proper stacking order
+                    sourceCaptions.sort(self.compareByLane);
+                    
+                    // Add a source identifier if there are multiple sources
+                    if (Object.keys(captionsBySource).length > 1) {
+                        // Get a readable source name
+                        var sourceName = self.getSourceName(sourceId);
+                        if (sourceName) {
+                            // Add a source identifier line with styling
+                            lines.push('<div class="caption-source-identifier">' + sourceName + '</div>');
+                        }
                     }
-                    lines = captionLines.concat(lines);
+                    
+                    // Process captions from this source
+                    sourceCaptions.forEach(function(caption) {
+                        if (!caption || !caption.text) return;
+                        
+                        // Ensure we have enough lines for proper positioning
+                        var linesToAdd = caption.neededNewlines - lines.length;
+                        for (var i = 0; i < linesToAdd; i++) {
+                            lines.unshift("");
+                        }
+                        
+                        // Split the caption text into lines
+                        var captionLines = caption.text.split("\n");
+                        if (captionLines.length > 0) {
+                            // Add spacing for better readability
+                            captionLines[0] = "\n" + captionLines[0];
+                            captionLines[captionLines.length - 1] = captionLines[captionLines.length - 1] + "\n";
+                        }
+                        
+                        // Add the caption lines to our display
+                        lines = captionLines.concat(lines);
+                    });
+                    
+                    // Add a separator between different sources if there are multiple sources
+                    if (Object.keys(captionsBySource).length > 1) {
+                        lines.push('<div class="caption-source-separator"></div>');
+                    }
                 });
 
                 return lines;
@@ -932,16 +1146,40 @@ function createApp() {
             },
 
             setCurrentTime: function (time, shouldPlay) {
-                var videoElement = this.getVideoElement();
-                if (videoElement) {
-                    this.currentTime = time;
-                    videoElement.currentTime = time;
-                    if (shouldPlay)
-                        videoElement.play();
-                    else
-                        this.pause();
-                    this.lastPauseTime = time;
-                    this.skipNextAutoPause = false;
+                try {
+                    var videoElement = this.getVideoElement();
+                    if (videoElement) {
+                        // Update our internal time tracker first
+                        this.currentTime = time;
+                        
+                        // Then update the video element's time
+                        videoElement.currentTime = time;
+                        
+                        // Handle play/pause in a try-catch to prevent AbortError
+                        try {
+                            if (shouldPlay) {
+                                // Use Promise-based play() with error handling
+                                videoElement.play()
+                                    .catch(error => {
+                                        console.warn('Error during play after seeking:', error);
+                                        // If we get an AbortError, it's usually because we're seeking too rapidly
+                                        // We can safely ignore this as it's a normal part of seeking
+                                        if (error.name !== 'AbortError') {
+                                            console.error('Unexpected error during play:', error);
+                                        }
+                                    });
+                            } else {
+                                this.pause();
+                            }
+                        } catch (playError) {
+                            console.warn('Error during play/pause after seeking:', playError);
+                        }
+                        
+                        this.lastPauseTime = time;
+                        this.skipNextAutoPause = false;
+                    }
+                } catch (error) {
+                    console.error('Error in setCurrentTime:', error);
                 }
             },
 
@@ -985,11 +1223,79 @@ function createApp() {
             },
 
             idsToCaptions: function (ids) {
-                if (!ids || !this.captions || !this.captionsMap)
+                if (!ids || !this.captions || !this.activeCaptionSource || !this.captions[this.activeCaptionSource])
                     return [];
 
                 var self = this;
-                return ids.map(function (id) { return self.captionsMap[id] })
+                return ids.map(function (id) { 
+                    return self.captionsMap[id]; 
+                }).filter(function(caption) { 
+                    return caption !== undefined; 
+                });
+            },
+            
+            getCaptionsById: function(ids) {
+                if (!ids || ids.length === 0)
+                    return [];
+                    
+                if (!this.activeCaptionSource || !this.captions[this.activeCaptionSource])
+                    return [];
+                    
+                var self = this;
+                return ids.map(function(id) {
+                    // Look for the caption in the active source first
+                    var caption = self.captionsMap[id];
+                    if (caption) return caption;
+                    
+                    // If not found, try other sources
+                    for (var sourceId in self.captions) {
+                        if (sourceId === self.activeCaptionSource) continue;
+                        
+                        var sourceCaptions = self.captions[sourceId];
+                        for (var i = 0; i < sourceCaptions.length; i++) {
+                            if (sourceCaptions[i].id === id) {
+                                return sourceCaptions[i];
+                            }
+                        }
+                    }
+                    
+                    return undefined;
+                }).filter(function(caption) {
+                    return caption !== undefined;
+                });
+            },
+            
+            getSourceName: function(sourceId) {
+                if (!sourceId) return 'Unknown';
+                
+                // If the source ID is a filename, extract a readable name from it
+                if (sourceId.includes('.')) {
+                    // Remove file extension
+                    var name = sourceId.split('.').slice(0, -1).join('.');
+                    // Replace underscores and hyphens with spaces
+                    name = name.replace(/[_-]/g, ' ');
+                    // Capitalize first letter of each word
+                    name = name.split(' ').map(function(word) {
+                        return word.charAt(0).toUpperCase() + word.slice(1);
+                    }).join(' ');
+                    return name;
+                }
+                
+                // For auto-generated IDs, provide a generic name
+                if (sourceId.startsWith('subtitle_')) {
+                    return 'Subtitle ' + (this.captionSources.indexOf(sourceId) + 1);
+                }
+                
+                return sourceId;
+            },
+            
+            switchCaptionSource: function(sourceId) {
+                if (this.captionSources.indexOf(sourceId) !== -1) {
+                    this.activeCaptionSource = sourceId;
+                    // Reset active captions when switching sources
+                    this.activeCaptionIds = [];
+                    this.clearAutoPauseCaptions();
+                }
             },
 
             playCaption: function (caption) {
@@ -1653,12 +1959,17 @@ function createApp() {
 
                 return lines.join("\n\n");
             },
-            ruby: function (arr, i) {
-                this.captions[i].text = "";
+            ruby: function (arr, sourceId, index) {
+                if (!sourceId || !this.captions[sourceId] || !this.captions[sourceId][index]) {
+                    console.warn('Invalid source or index for ruby function');
+                    return;
+                }
+                
+                this.captions[sourceId][index].text = "";
 
                 for (let t of arr) {
                     try {
-                        //this.captions[i].text += "<ruby>";
+                        //this.captions[sourceId][index].text += "<ruby>";
                         let kj = typeof t === "object" ? t[0] : t;
                         let kn = typeof t === "object" ? t[1] : "";
                         kn = kj == kn ? "" : kn;
@@ -1668,59 +1979,89 @@ function createApp() {
                         let ka = []
                         for (let i = 1; i < kja.length; i++) {
                             const k = kja[kja.length - i];
-                            const n = kna[kna.length - j]
+                            const n = kna[kna.length - j];
                             if (k == n) {
-                                let e = kja.splice(kja.length - i, 1)
-                                kna.splice(kna.length - j, 1)
-                                i -= 1
-                                j -= 1
-                                ka = [e, ...ka]
+                                let e = kja.splice(kja.length - i, 1);
+                                kna.splice(kna.length - j, 1);
+                                i -= 1;
+                                j -= 1;
+                                ka = [e, ...ka];
                             } else {
-                                break
+                                break;
                             }
-                            j += 1
+                            j += 1;
                         }
                         if (typeof t === 'object') {
                             kn = `<rt>${kna.join('')}</rt>`
                             kj = `<ruby>${kja.join('')}${kn}</ruby>${ka.join('')}`
                         }
-                        this.captions[i].text += kj;
-                        //this.captions[i].text += "</ruby>";
+                        this.captions[sourceId][index].text += kj;
+                        //this.captions[sourceId][index].text += "</ruby>";
                     } catch (e) {
                         console.error(e);
                     }
                 }
 
-                console.log(i, this.captions[i]);
+                console.log(sourceId, index, this.captions[sourceId][index]);
             },
-            furigana: async function (limit = 50) {
-                console.log(limit, this.captions);
-                tokenizer = await initializeTokenizer()
-                const promises = [];
-                for (let i in this.captions) {
-                    try {
-                        const text = this.captions[i].text;
-                        console.log(i, promises.length);
-                        const promise = makeFurigana(text)
-                            .then((arr) => {
-                                this.ruby(arr, i);
-                            })
-                            .catch((error) => {
-                                console.error('Error in makeFurigana:', error);
-                            });
+            furigana: async function (sourceId, limit = 50) {
+                try {
+                    // Use active source if not specified
+                    if (!sourceId && this.activeCaptionSource) {
+                        sourceId = this.activeCaptionSource;
+                    }
+                    
+                    // Validate source exists
+                    if (!sourceId || !this.captions || !this.captions[sourceId]) {
+                        console.warn('No valid caption source for furigana:', sourceId);
+                        return;
+                    }
+                    
+                    console.log('Processing furigana for source:', sourceId, 'with limit:', limit);
+                    
+                    // Initialize tokenizer
+                    tokenizer = await initializeTokenizer();
+                    const promises = [];
+                    const captionsArray = this.captions[sourceId];
+                    
+                    if (!Array.isArray(captionsArray)) {
+                        console.error('Captions are not in expected array format:', captionsArray);
+                        return;
+                    }
+                    
+                    for (let i = 0; i < captionsArray.length; i++) {
+                        try {
+                            if (!captionsArray[i] || !captionsArray[i].text) {
+                                console.warn('Invalid caption at index', i);
+                                continue;
+                            }
+                            
+                            const text = captionsArray[i].text;
+                            console.log('Processing caption', i, 'with text:', text);
+                            
+                            const promise = makeFurigana(text)
+                                .then((arr) => {
+                                    this.ruby(arr, sourceId, i);
+                                })
+                                .catch((error) => {
+                                    console.error('Error in makeFurigana for caption', i, ':', error);
+                                });
 
-                        //  promises.push(promise);
+                            //  promises.push(promise);
 
-                        // Check if the number of promises exceeds 50
-                        if (promises.length >= limit) {
-                            //    await Promise.all(promises);
-                            //    promises.length = 0; // Clear the promises array
+                            // Check if the number of promises exceeds the limit
+                            if (promises.length >= limit) {
+                                //    await Promise.all(promises);
+                                //    promises.length = 0; // Clear the promises array
                         }
                     } catch (e) {
                         console.error(e);
                     }
                 }
-
+                } catch (e) {
+                console.error(e);
+                console.trace();
+                }
                 // Wait for any remaining promises to resolve
                 // await Promise.all(promises);
             },
@@ -1913,3 +2254,5 @@ function createApp() {
         },
     });
 }
+console.log("Creating app Date: " + new Date().toISOString().replace('T', ' ').replace('Z', ''));
+createApp();

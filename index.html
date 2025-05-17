@@ -204,6 +204,24 @@
       display: block;
       position: relative;
     }
+    
+    .caption-source-identifier {
+      font-size: 0.8em;
+      color: #ffcc00;
+      margin-bottom: 0.5em;
+      opacity: 0.8;
+      font-weight: bold;
+      text-align: center;
+    }
+    
+    .caption-source-separator {
+      height: 1px;
+      background-color: rgba(255, 255, 255, 0.3);
+      margin: 0.5em 0;
+      width: 80%;
+      margin-left: auto;
+      margin-right: auto;
+    }
 
     .button {
       color: var(--button-fg-color);
@@ -855,9 +873,9 @@
           </div>
         </div>
         <div class="sidebar">
-          <caption-bar @select-caption="selectCaption" @set-custom-offset="setCustomOffset" :captions="captions"
+          <caption-bar @select-caption="selectCaption" @set-custom-offset="setCustomOffset" @switch-source="switchCaptionSource" :captions="captions"
             :custom-offsets="customOffsets" :is-auto-pause-mode="isAutoPauseMode" :is-offset-mode="isOffsetMode"
-            :current-time="currentTime" v-if="captionsUrl"></caption-bar>
+            :current-time="currentTime" v-if="captionsUrl" :caption-sources="captionSources" :active-caption-source="activeCaptionSource"></caption-bar>
           <div v-if="captionsUrl && isOffsetMode" class="offset-hint unselectable">Select the subtitle that ends where
             the video currently is: {{displayAsVideoTime(currentTime)}}</div>
           <div class="auto-pause-text unselectable" v-if="isAutoPauseMode">Auto Pause <span
@@ -1126,13 +1144,13 @@
     <form id="novalidatedform" novalidate />
   </div>
 </body>
+<script src="js/vue.js"></script>
 <script src="js/kuromoji.js"></script>
 <script src="js/wanakana.min.js"></script>
 <script src="js/init.js"></script>
 <script src="js/aGlobal.js"></script>
 <script src="js/index.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/vue/dist/vue.js"></script>
+<!-- <script src="js/videoList.js"></script> -->
 <!-- For dev, uncomment the above script and comment out the script below. -->
-<script>createApp()</script>
 
 </html>
