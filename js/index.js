@@ -630,7 +630,7 @@ function createApp() {
                             break;
                         case 't':
                         case 'T':
-                            if (eitherNG)
+                            if (videoNG)
                                 return;
                             if (e.ctrlKey || e.altKey || e.metaKey)
                                 return;
@@ -1655,7 +1655,7 @@ function createApp() {
             },
             ruby: function (arr, i) {
                 this.captions[i].text = "";
-                
+
                 for (let t of arr) {
                     try {
                         //this.captions[i].text += "<ruby>";
@@ -1667,11 +1667,11 @@ function createApp() {
                         let kna = kn.split('')
                         let ka = []
                         for (let i = 1; i < kja.length; i++) {
-                            const k = kja[kja.length-i];
-                            const n = kna[kna.length-j]
-                            if(k == n){
-                                let e = kja.splice(kja.length-i, 1)
-                                kna.splice(kna.length-j,1)
+                            const k = kja[kja.length - i];
+                            const n = kna[kna.length - j]
+                            if (k == n) {
+                                let e = kja.splice(kja.length - i, 1)
+                                kna.splice(kna.length - j, 1)
                                 i -= 1
                                 j -= 1
                                 ka = [e, ...ka]
@@ -1680,7 +1680,7 @@ function createApp() {
                             }
                             j += 1
                         }
-                        if(typeof t === 'object'){
+                        if (typeof t === 'object') {
                             kn = `<rt>${kna.join('')}</rt>`
                             kj = `<ruby>${kja.join('')}${kn}</ruby>${ka.join('')}`
                         }
@@ -1702,19 +1702,19 @@ function createApp() {
                         const text = this.captions[i].text;
                         console.log(i, promises.length);
                         const promise = makeFurigana(text)
-                        .then((arr) => {
-                          this.ruby(arr, i);
-                        })
-                        .catch((error) => {
-                          console.error('Error in makeFurigana:', error);
-                        });
+                            .then((arr) => {
+                                this.ruby(arr, i);
+                            })
+                            .catch((error) => {
+                                console.error('Error in makeFurigana:', error);
+                            });
 
-                      //  promises.push(promise);
+                        //  promises.push(promise);
 
                         // Check if the number of promises exceeds 50
                         if (promises.length >= limit) {
-                        //    await Promise.all(promises);
-                        //    promises.length = 0; // Clear the promises array
+                            //    await Promise.all(promises);
+                            //    promises.length = 0; // Clear the promises array
                         }
                     } catch (e) {
                         console.error(e);

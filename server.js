@@ -53,5 +53,5 @@ const port = getPort();
 app.listen(port, () => {
     const url = `http://localhost:${port}`
     console.log(`Server is running on ${url}`);
-    open(url)
+//    open(url)
 }); 
