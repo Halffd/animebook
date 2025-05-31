@@ -6,6 +6,59 @@ var analyze
 var wn = console.warn
 var subtitlesFileContent
 
+function toggleControls() {
+    const video = document.getElementById('ab-video-element');
+    const styleId = 'hide-video-controls';
+    let existingStyle = document.getElementById(styleId);
+
+    if (existingStyle) {
+        // Controls are hidden, show them
+        existingStyle.remove();
+        video.dataset.controlsHidden = 'false';
+    } else {
+        // Controls are visible, hide them
+        const style = document.createElement('style');
+        style.id = styleId;
+        style.textContent = `
+        #ab-video-element::-webkit-media-controls {
+            display: none !important;
+        }
+        #ab-video-element::-webkit-media-controls-panel {
+            display: none !important;
+        }
+        #ab-video-element::-webkit-media-controls-enclosure {
+            display: none !important;
+        }
+        #ab-video-element::-moz-media-controls {
+            display: none !important;
+        }
+        `;
+        document.head.appendChild(style);
+        video.dataset.controlsHidden = 'true';
+    }
+    }
+
+    // Check if controls are currently hidden
+    function areControlsHidden() {
+    const video = document.getElementById('ab-video-element');
+    return video.dataset.controlsHidden === 'true';
+    }
+
+    // Hide controls initially
+    function hideControls() {
+    const video = document.getElementById('ab-video-element');
+    if (!areControlsHidden()) {
+        toggleControls();
+    }
+    }
+
+    // Show controls
+    function showControls() {
+    const video = document.getElementById('ab-video-element');
+    if (areControlsHidden()) {
+        toggleControls();
+    }
+    }
 var analyzeFurigana = async function (text, mode = 'A') {
     const url = `${API_URL}/furiganas`;
     const payload = {
@@ -888,6 +941,9 @@ function createApp() {
                             self.shouldShowMainCaption = !self.shouldShowMainCaption;
                             self.notify(self.shouldShowMainCaption ? "Subtitles shown" : "Subtitles hidden");
                             break;
+                        case 'y':
+                            toggleControls();
+                            break;
                         case 'b':
                         case 'B':
                             if (sidebarNG)
@@ -1237,8 +1293,10 @@ function createApp() {
                         console.log('[DEBUG] updateActiveCaptions - Updating activeCaptionIds:', newIds);
                         this.activeCaptionIds = newIds;
                         
-                        // Replay the caption to ensure it's displayed
-                        this.replayCaption();
+                        // Just update the active captions without replaying
+                        if (this.activeCaptions && this.activeCaptions.length > 0) {
+                            console.log('[DEBUG] updateActiveCaptions - Updated active caption text:', this.activeCaptions[0].text);
+                        }
                     }
                 } else if (this.activeCaptionIds && this.activeCaptionIds.length > 0) {
                     // Clear active captions if no matches and we had active captions before
@@ -1460,11 +1518,21 @@ function createApp() {
                     console.log('[DEBUG] playCaption - No caption provided');
                     return;
                 }
-                console.log('[DEBUG] playCaption - Setting time to:', caption.startTime + 0.0001);
-                this.setCurrentTime(caption.startTime + 0.0001, true);
-                // For subtitles that are too close to each other chronologically,
-                // setting the active caption here makes sure we don't get stuck on a single
-                // caption when hitting the left and right arrow keys
+                
+                // Only seek if the current time is not within the caption's time range
+                const currentTime = this.getCurrentTime();
+                const isOutsideCaptionRange = currentTime < caption.startTime || currentTime > caption.endTime;
+                
+                console.log('[DEBUG] playCaption - Current time:', currentTime, 'Caption range:', caption.startTime + ' - ' + caption.endTime, 'Outside range:', isOutsideCaptionRange);
+                
+                if (isOutsideCaptionRange) {
+                    console.log('[DEBUG] playCaption - Seeking to:', caption.startTime + 0.0001);
+                    this.setCurrentTime(caption.startTime + 0.0001, true);
+                } else {
+                    console.log('[DEBUG] playCaption - Already within caption time range, not seeking');
+                }
+                
+                // Update active caption without causing a seek
                 this.activeCaptionIds = [caption.id];
                 console.log('[DEBUG] playCaption - Set activeCaptionIds to:', this.activeCaptionIds);
             },
