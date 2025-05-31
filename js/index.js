@@ -950,7 +950,7 @@ function createApp() {
                         case 'N':
                             if (videoNG)
                                 return;
-                            stopEvent(e);
+                            stopEvent(e)
                             self.increasePlaybackSpeed(false)
                             break;
                     }
@@ -1150,10 +1150,67 @@ function createApp() {
                 this.clearSelection();
             },
 
-            onVideoSeek: function (event) {
-                if (this.scheduledImageCopies > 0) {
-                    this.copyImage();
-                    this.scheduledImageCopies = Math.max(0, this.scheduledImageCopies - 1);
+            onVideoSeek: function (e) {
+                console.log('[DEBUG] onVideoSeek - called');
+                this.currentTime = this.getCurrentTime();
+                console.log('[DEBUG] onVideoSeek - currentTime:', this.currentTime);
+                
+                // Update captions immediately and schedule another update after a short delay
+                this.updateActiveCaptions();
+                setTimeout(this.updateActiveCaptions.bind(this), 50);
+            },
+            
+            updateActiveCaptions: function() {
+                console.log('[DEBUG] updateActiveCaptions - called');
+                if (!this.captions || !this.activeCaptionSource) {
+                    console.log('[DEBUG] updateActiveCaptions - No captions or active source');
+                    return;
+                }
+                
+                var currentTime = this.getCurrentTime();
+                var sourceCaptions = this.captions[this.activeCaptionSource];
+                
+                if (!sourceCaptions || !sourceCaptions.length) {
+                    console.log('[DEBUG] updateActiveCaptions - No source captions available');
+                    return;
+                }
+                
+                console.log('[DEBUG] updateActiveCaptions - Checking', sourceCaptions.length, 'captions for time:', currentTime);
+                
+                // Find captions that should be active at the current time
+                var matchingCaptions = sourceCaptions.filter(function(caption) {
+                    return currentTime >= caption.startTime && currentTime <= caption.endTime;
+                });
+                
+                console.log('[DEBUG] updateActiveCaptions - Found', matchingCaptions.length, 'matching captions');
+                
+                if (matchingCaptions.length > 0) {
+                    var newIds = matchingCaptions.map(function(caption) { return caption.id; });
+                    
+                    // Only update if the IDs have changed
+                    var idsChanged = false;
+                    if (!this.activeCaptionIds || this.activeCaptionIds.length !== newIds.length) {
+                        idsChanged = true;
+                    } else {
+                        for (var i = 0; i < newIds.length; i++) {
+                            if (this.activeCaptionIds.indexOf(newIds[i]) === -1) {
+                                idsChanged = true;
+                                break;
+                            }
+                        }
+                    }
+                    
+                    if (idsChanged) {
+                        console.log('[DEBUG] updateActiveCaptions - Updating activeCaptionIds:', newIds);
+                        this.activeCaptionIds = newIds;
+                        
+                        // Replay the caption to ensure it's displayed
+                        this.replayCaption();
+                    }
+                } else if (this.activeCaptionIds && this.activeCaptionIds.length > 0) {
+                    // Clear active captions if no matches and we had active captions before
+                    console.log('[DEBUG] updateActiveCaptions - Clearing activeCaptionIds');
+                    this.activeCaptionIds = [];
                 }
             },
 
@@ -1163,27 +1220,43 @@ function createApp() {
 
             onTimeUpdate: function () {
                 this.currentTime = this.getCurrentTime();
+                console.log('[DEBUG] onTimeUpdate - currentTime:', this.currentTime);
+                
+                // Use our updateActiveCaptions method to handle caption updates
+                this.updateActiveCaptions();
+                
+                // Debug active captions
+                console.log('[DEBUG] onTimeUpdate - activeCaptions:', this.activeCaptions ? this.activeCaptions.length : 'null');
+                if (this.activeCaptions && this.activeCaptions.length > 0) {
+                    console.log('[DEBUG] onTimeUpdate - First activeCaption text:', this.activeCaptions[0].text);
+                }
             },
 
             getCurrentTime: function () {
+                console.log('[DEBUG] getCurrentTime - called');
                 var videoElement = this.getVideoElement();
                 return videoElement ? videoElement.currentTime : 0;
             },
 
             getTotalDuration: function () {
+                console.log('[DEBUG] getTotalDuration - called');
                 var videoElement = this.getVideoElement();
                 return videoElement ? videoElement.duration : 0;
             },
 
             setCurrentTime: function (time, shouldPlay) {
+                console.log('[DEBUG] setCurrentTime - time:', time, 'shouldPlay:', shouldPlay);
                 try {
                     var videoElement = this.getVideoElement();
+                    console.log('[DEBUG] setCurrentTime - videoElement:', videoElement ? 'exists' : 'null');
                     if (videoElement) {
                         // Update our internal time tracker first
                         this.currentTime = time;
+                        console.log('[DEBUG] setCurrentTime - Updated internal currentTime:', this.currentTime);
                         
                         // Then update the video element's time
                         videoElement.currentTime = time;
+                        console.log('[DEBUG] setCurrentTime - Set video currentTime to:', time);
                         
                         // Handle play/pause in a try-catch to prevent AbortError
                         try {
@@ -1253,15 +1326,35 @@ function createApp() {
             },
 
             idsToCaptions: function (ids) {
-                if (!ids || !this.captions || !this.activeCaptionSource || !this.captions[this.activeCaptionSource])
+                console.log('[DEBUG] idsToCaptions - ids:', ids);
+                if (!ids) {
+                    console.log('[DEBUG] idsToCaptions - No ids provided');
                     return [];
+                }
+                if (!this.captions) {
+                    console.log('[DEBUG] idsToCaptions - No captions available');
+                    return [];
+                }
+                if (!this.activeCaptionSource) {
+                    console.log('[DEBUG] idsToCaptions - No activeCaptionSource');
+                    return [];
+                }
+                if (!this.captions[this.activeCaptionSource]) {
+                    console.log('[DEBUG] idsToCaptions - No captions for activeCaptionSource:', this.activeCaptionSource);
+                    return [];
+                }
 
                 var self = this;
-                return ids.map(function (id) { 
-                    return self.captionsMap[id]; 
+                var result = ids.map(function (id) { 
+                    var caption = self.captionsMap[id];
+                    console.log('[DEBUG] idsToCaptions - id:', id, 'found caption:', caption ? 'yes' : 'no');
+                    return caption; 
                 }).filter(function(caption) { 
                     return caption !== undefined; 
                 });
+                
+                console.log('[DEBUG] idsToCaptions - Returning', result.length, 'captions');
+                return result;
             },
             
             getCaptionsById: function(ids) {
@@ -1329,21 +1422,58 @@ function createApp() {
             },
 
             playCaption: function (caption) {
-                if (!caption)
+                console.log('[DEBUG] playCaption - caption:', caption);
+                if (!caption) {
+                    console.log('[DEBUG] playCaption - No caption provided');
                     return;
+                }
+                console.log('[DEBUG] playCaption - Setting time to:', caption.startTime + 0.0001);
                 this.setCurrentTime(caption.startTime + 0.0001, true);
                 // For subtitles that are too close to each other chronologically,
                 // setting the active caption here makes sure we don't get stuck on a single
                 // caption when hitting the left and right arrow keys
                 this.activeCaptionIds = [caption.id];
+                console.log('[DEBUG] playCaption - Set activeCaptionIds to:', this.activeCaptionIds);
             },
 
-            replayCaption: function (e) {
-                if (!this.captions)
-                    return;
-                var currentCaptionIds = this.activeCaptionIds;
-                this.playCaption(this.activeCaptions[0] || this.captions[0]);
-                this.activeCaptionIds = currentCaptionIds;
+            replayCaption: function () {
+                console.log('[DEBUG] replayCaption - called');
+                var currentCaption = null;
+                
+                // Try to get the current caption from activeCaptions
+                if (this.activeCaptions && this.activeCaptions.length > 0) {
+                    currentCaption = this.activeCaptions[0];
+                    console.log('[DEBUG] replayCaption - Using first activeCaption');
+                }
+                
+                // If no active caption, try to find one at the current time
+                if (!currentCaption) {
+                    var currentTime = this.currentTime;
+                    var sourceCaptions = this.captions[this.activeCaptionSource];
+                    if (sourceCaptions && sourceCaptions.length) {
+                        // Find caption that includes current time
+                        for (var i = 0; i < sourceCaptions.length; i++) {
+                            if (currentTime >= sourceCaptions[i].startTime && currentTime <= sourceCaptions[i].endTime) {
+                                currentCaption = sourceCaptions[i];
+                                console.log('[DEBUG] replayCaption - Found caption at current time:', currentCaption);
+                                break;
+                            }
+                        }
+                        
+                        // If still no caption, use the first one as fallback
+                        if (!currentCaption) {
+                            console.log('[DEBUG] replayCaption - Falling back to first caption');
+                            currentCaption = sourceCaptions[0];
+                        }
+                    }
+                }
+                
+                console.log('[DEBUG] replayCaption - currentCaption:', currentCaption);
+                if (currentCaption) {
+                    this.playCaption(currentCaption);
+                } else {
+                    console.log('[DEBUG] replayCaption - No caption to replay');
+                }
             },
 
             previousCaption: function (e) {
@@ -1559,9 +1689,59 @@ function createApp() {
             },
 
             getTrack: function () {
-                var tracks = this.getVideoElement().textTracks;
-                var track = tracks && tracks[0];
+                console.log('[DEBUG] getTrack - called');
+                var videoElement = this.getVideoElement();
+                console.log('[DEBUG] getTrack - videoElement:', videoElement ? 'exists' : 'null');
+                if (!videoElement) {
+                    console.log('[DEBUG] getTrack - No video element');
+                    return null;
+                }
+                console.log('[DEBUG] getTrack - textTracks:', videoElement.textTracks ? videoElement.textTracks.length : 'null');
+                if (!videoElement.textTracks || videoElement.textTracks.length === 0) {
+                    console.log('[DEBUG] getTrack - No text tracks available');
+                    return null;
+                }
+                
+                // Ensure the track is in showing mode
+                var track = videoElement.textTracks[0];
+                if (track && track.mode !== "showing") {
+                    track.mode = "showing";
+                    console.log('[DEBUG] getTrack - Set track.mode to showing');
+                }
+                
+                console.log('[DEBUG] getTrack - Returning track 0');
                 return track;
+            },
+
+            furigana: function (sourceId) {
+                console.log('[DEBUG] furigana - sourceId:', sourceId);
+                if (!this.captions[sourceId]) {
+                    console.log('[DEBUG] furigana - No captions for sourceId');
+                    return;
+                }
+                
+                if (this.savedSettings.furiganaMode === 'none') {
+                    console.log('[DEBUG] furigana - furiganaMode is none, skipping');
+                    return;
+                }
+                    
+                var captions = this.captions[sourceId];
+                console.log('[DEBUG] furigana - Processing', captions.length, 'captions');
+                var mode = this.savedSettings.furiganaMode;
+                console.log('[DEBUG] furigana - mode:', mode);
+                var self = this;
+                
+                captions.forEach(function (caption, index) {
+                    if (caption.text.trim().length === 0) {
+                        console.log('[DEBUG] furigana - Caption', index, 'is empty, skipping');
+                        return;
+                    }
+                    
+                    console.log('[DEBUG] furigana - Before processing caption', index, ':', caption.text);
+                    caption.text = analyzeFurigana(caption.text, mode);
+                    console.log('[DEBUG] furigana - After processing caption', index, ':', caption.text);
+                });
+                console.log('[DEBUG] furigana - Finished processing furigana');
             },
 
             onVideoLoad: function (e) {
@@ -1630,24 +1810,34 @@ function createApp() {
             },
 
             onCaptionsLoad: function (e) {
-                var track = this.getTrack();
-                if (!track)
-                    return;
-                track.mode = "hidden";
+                console.log('[DEBUG] onCaptionsLoad - called');
+                
+                // Initialize captions map for faster lookup
+                if (this.captions && this.activeCaptionSource) {
+                    console.log('[DEBUG] onCaptionsLoad - Initializing captionsMap');
+                    this.captionsMap = {};
+                    var sourceCaptions = this.captions[this.activeCaptionSource];
+                    if (sourceCaptions && sourceCaptions.length) {
+                        for (var i = 0; i < sourceCaptions.length; i++) {
+                            var caption = sourceCaptions[i];
+                            if (caption && caption.id) {
+                                this.captionsMap[caption.id] = caption;
+                            }
+                        }
+                        console.log('[DEBUG] onCaptionsLoad - Initialized captionsMap with', Object.keys(this.captionsMap).length, 'captions');
+                    }
+                }
+                
+                // Check for captions at the current time
+                this.updateActiveCaptions();
             },
 
             onCaptionsCueChange: function (e) {
-                var track = this.getTrack();
-                if (!track)
-                    return;
-                track.mode = "hidden";
-
-                var newCaptionIds = Array.prototype.map.call(track.activeCues, function (cue) { return cue.id });
-                if (this.isAutoPauseMode)
-                    this.handleAutoPauseCaptionUpdate(newCaptionIds);
-
-                if (newCaptionIds.length > 0)
-                    this.activeCaptionIds = newCaptionIds;
+                console.log('[DEBUG] onCaptionsCueChange - called');
+                
+                // We're using our manual caption tracking system instead
+                // This function is kept for compatibility but doesn't do anything
+                console.log('[DEBUG] onCaptionsCueChange - Using manual caption tracking instead');
             },
 
             handleAutoPauseCaptionUpdate: function (newCaptionIds) {
@@ -1995,44 +2185,61 @@ function createApp() {
                     return;
                 }
                 
+                // Reset the caption text to prevent stacking
                 this.captions[sourceId][index].text = "";
+                console.log('[DEBUG] ruby - Processing furigana for caption', index, 'in source', sourceId);
 
                 for (let t of arr) {
                     try {
-                        //this.captions[sourceId][index].text += "<ruby>";
                         let kj = typeof t === "object" ? t[0] : t;
                         let kn = typeof t === "object" ? t[1] : "";
                         kn = kj == kn ? "" : kn;
-                        let kja = kj.split('')
-                        let j = 1
-                        let kna = kn.split('')
-                        let ka = []
-                        for (let i = 1; i < kja.length; i++) {
+                        
+                        // Skip processing if no furigana is needed
+                        if (typeof t !== 'object' || !kn) {
+                            this.captions[sourceId][index].text += kj;
+                            continue;
+                        }
+                        
+                        let kja = kj.split('');
+                        let kna = kn.split('');
+                        let ka = [];
+                        
+                        // Process common characters at the end
+                        let j = 0;
+                        for (let i = 1; i <= Math.min(kja.length, kna.length); i++) {
                             const k = kja[kja.length - i];
-                            const n = kna[kna.length - j];
-                            if (k == n) {
-                                let e = kja.splice(kja.length - i, 1);
-                                kna.splice(kna.length - j, 1);
+                            const n = kna[kna.length - i + j];
+                            
+                            if (k === n) {
+                                let e = kja.splice(kja.length - i, 1)[0];
+                                kna.splice(kna.length - i + j, 1);
                                 i -= 1;
-                                j -= 1;
-                                ka = [e, ...ka];
+                                ka.unshift(e);
                             } else {
                                 break;
                             }
-                            j += 1;
                         }
-                        if (typeof t === 'object') {
-                            kn = `<rt>${kna.join('')}</rt>`
-                            kj = `<ruby>${kja.join('')}${kn}</ruby>${ka.join('')}`
+                        
+                        // Only create ruby if we have furigana text
+                        if (kna.length > 0) {
+                            let rubyText = `<ruby>${kja.join('')}<rt>${kna.join('')}</rt></ruby>${ka.join('')}`;
+                            this.captions[sourceId][index].text += rubyText;
+                        } else {
+                            this.captions[sourceId][index].text += kja.join('') + ka.join('');
                         }
-                        this.captions[sourceId][index].text += kj;
-                        //this.captions[sourceId][index].text += "</ruby>";
                     } catch (e) {
-                        console.error(e);
+                        console.error('Error processing furigana:', e);
+                        // Fallback: just add the original text
+                        if (typeof t === 'object') {
+                            this.captions[sourceId][index].text += t[0];
+                        } else {
+                            this.captions[sourceId][index].text += t;
+                        }
                     }
                 }
 
-                console.log(sourceId, index, this.captions[sourceId][index]);
+                console.log('[DEBUG] ruby - Processed caption:', this.captions[sourceId][index].text);
             },
             furigana: async function (sourceId, limit = 50) {
                 try {
