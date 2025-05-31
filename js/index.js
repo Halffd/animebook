@@ -291,17 +291,31 @@ function createApp() {
           </div>
           <div class="captions-container">
             <div class="captions-list" lang="ja">
-              <span v-if="activeCaptionSource && captions[activeCaptionSource]" v-for="(caption, index) in captions[activeCaptionSource]" class="caption-controls" :key="caption.id">
-                <caption-item 
-                @select-caption="selectCaption"
-                @set-custom-offset="setCustomOffset"
-                :caption="caption" 
-                :custom-offsets="customOffsets"
-                :isAutoPauseMode="isAutoPauseMode"
-                :isOffsetMode="isOffsetMode"
-                :currentTime="bufferTime"
-                ></caption-item>
-              </span>
+              <!-- Display captions from all sources -->
+              <template v-for="sourceId in captionSources">
+                <!-- Source header -->
+                <div class="caption-source-header" v-if="captionSources.length > 1 && captions[sourceId] && captions[sourceId].length > 0" :key="'header-'+sourceId">
+                  {{ getSourceName(sourceId) }}
+                  <span class="source-active-indicator" v-if="sourceId === activeCaptionSource">(active)</span>
+                </div>
+                
+                <!-- Captions from this source -->
+                <span v-if="captions[sourceId]" v-for="(caption, index) in captions[sourceId]" class="caption-controls" :key="sourceId + '-' + caption.id">
+                  <caption-item 
+                    @select-caption="selectCaption"
+                    @set-custom-offset="setCustomOffset"
+                    :caption="caption" 
+                    :custom-offsets="customOffsets"
+                    :isAutoPauseMode="isAutoPauseMode"
+                    :isOffsetMode="isOffsetMode"
+                    :currentTime="bufferTime"
+                    :class="{'active-source': sourceId === activeCaptionSource}"
+                  ></caption-item>
+                </span>
+                
+                <!-- Source separator -->
+                <div class="source-separator" v-if="captionSources.length > 1 && sourceId !== captionSources[captionSources.length-1]" :key="'sep-'+sourceId"></div>
+              </template>
             </div>
           </div>
         </div>
@@ -577,9 +591,25 @@ function createApp() {
                 return lines;
             },
             displayedHtml: function () {
-                if (!this.displayedLines)
+                if (!this.displayedLines || this.displayedLines.length === 0)
                     return "";
-                return this.displayedLines.map(Utils.wrapInP).join("");
+                
+                // Process lines that may already contain HTML elements (like source identifiers)
+                var processedLines = [];
+                
+                for (var i = 0; i < this.displayedLines.length; i++) {
+                    var line = this.displayedLines[i];
+                    
+                    // If the line already contains HTML tags, don't wrap it in a paragraph
+                    if (line.indexOf('<') >= 0 && line.indexOf('>') >= 0) {
+                        processedLines.push(line);
+                    } else {
+                        // Otherwise wrap it in a paragraph
+                        processedLines.push(Utils.wrapInP(line));
+                    }
+                }
+                
+                return processedLines.join("");
             },
             shownCaptionsKey: function () {
                 if (!this.shownCaptions || this.shownCaptions.length === 0)
