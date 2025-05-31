@@ -67,24 +67,29 @@ async function furiganas(captions, mode = 'A') {
 
     for (let i in arr) {
         if (i >= captions.length) break;
-
-        let rubyText = `<ruby>`;
+    
+        let parts = [];
         for (let t of arr[i]) {
             if (!t || t.length < 2) continue;
-
+    
             let kj = t[0];
             let kn = t[1];
             kn = kj === kn ? '' : kn;
-
+    
             const wordType = getWordType(kj, kn);
             const color = colorMap[wordType] || colorMap.default;
-
-            rubyText += `<span style="color:${color}">${kj}<rt>${kn}</rt></span>`;
+    
+            if (kn) {
+                parts.push(
+                    `<ruby style="color: ${color} !important">${kj}<rt>${kn}</rt></ruby>`
+                );
+            } else {
+                parts.push(`<span style="color: ${color} !important">${kj}</span>`);
+            }
         }
-        rubyText += `</ruby>`;
-
-        captions[i].text = rubyText;
-    }
+    
+        captions[i].text = parts.join('');
+    }    
 
     return captions;
 }

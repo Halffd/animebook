@@ -828,10 +828,8 @@
   width: 100%;
   text-align: center;
   color: white;
-  text-shadow: 3px 3px 0px black, -3px 3px 0px black, 3px -3px 0px black, -3px -3px 0px black;
-  font-family: sans-serif;
-  pointer-events: none; /* prevents blocking mouse events */
-  user-select: none;
+  text-shadow: 5px 5px 0px black, -5px 5px 0px black, 5px -5px 0px black, -5px -5px 0px black;
+  font-family: "Noto Sans JP", sans-serif;
 }
 
 .current-caption p:nth-child(1) {
@@ -849,9 +847,39 @@
 }
 
 .current-caption rt {
-  font-size: 0.4em;
-  color: yellow;
-  text-shadow: none;
+  color: yellow !important;
+  text-shadow: none !important;
+}
+.current-caption {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+.video-wrapper {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.video-wrapper video::-webkit-media-controls {
+  opacity: 0;
+  transition: opacity 0.3s;
+  pointer-events: none;
+}
+
+.video-wrapper:hover video::-webkit-media-controls {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.video-wrapper:hover::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 20%;
+  width: 100%;
+  pointer-events: auto;
 }
   </style>
 
@@ -912,7 +940,7 @@
           </div>
         </div>
         <div :class="notifyTextClass" v-if="notifyText" v-html="notifyText"></div>
-        <div :class="videoContainerClass" v-show="videoUrl && !shouldShowVideoError">
+        <div class="video-wrapper" :class="videoContainerClass" v-show="videoUrl && !shouldShowVideoError">
           <video id="ab-video-element" class="video-element" :style="videoStyle" :src="videoUrl" @error="onVideoError"
             @timeupdate="onTimeUpdate" crossorigin="anonymous" :controls="savedSettings.showVideoControls"
             disablePictureInPicture disabled tabIndex="-1" @focus="onVideoFocus" @click="onVideoClick"
