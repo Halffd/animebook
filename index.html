@@ -821,6 +821,38 @@
     [data-pseudo-content]::before {
       content: attr(data-pseudo-content);
     }
+
+    .current-caption {
+  position: absolute;
+  bottom: 10%;
+  width: 100%;
+  text-align: center;
+  color: white;
+  text-shadow: 3px 3px 0px black, -3px 3px 0px black, 3px -3px 0px black, -3px -3px 0px black;
+  font-family: sans-serif;
+  pointer-events: none; /* prevents blocking mouse events */
+  user-select: none;
+}
+
+.current-caption p:nth-child(1) {
+  font-size: 48px;
+  font-weight: bold;
+}
+
+.current-caption p:nth-child(2) {
+  font-size: 38px;
+  font-weight: normal;
+}
+
+.current-caption ruby {
+  ruby-position: over;
+}
+
+.current-caption rt {
+  font-size: 0.4em;
+  color: yellow;
+  text-shadow: none;
+}
   </style>
 
 </head>

@@ -28,60 +28,64 @@ var analyzeFurigana = async function (text, mode = 'A') {
     const data = await response.json();
     return data;
 }
+const colorMap = {
+    particle: '#ff69b4', // pink
+    kanji: '#74ebff',    // blue
+    kana: '#32ed32',     // green
+    default: '#ffffff',  // white
+};
 
-var furiganas = function (captions) {
-    // Handle case where captions is undefined or not an array
+function getWordType(kj, kn) {
+    const isKana = (s) => /^[\u3040-\u309F\u30A0-\u30FFー]+$/.test(s);
+    const isKanji = (s) => /[\u4e00-\u9faf]/.test(s);
+    const isParticle = ['は', 'が', 'を', 'に', 'で', 'と', 'へ', 'も', 'や', 'の', 'から', 'まで'].includes(kj);
+
+    if (isParticle) return 'particle';
+    if (isKanji(kj)) return 'kanji';
+    if (isKana(kj)) return 'kana';
+    return 'default';
+}
+function stripRubyTags(html) {
+    return html.replace(/<ruby>|<\/ruby>|<rt>.*?<\/rt>/g, '');
+}
+
+async function furiganas(captions, mode = 'A') {
     if (!captions || !Array.isArray(captions) || captions.length === 0) {
         console.warn('Invalid captions provided to furiganas function:', captions);
         return captions;
     }
-    
-    console.log('Processing captions for furigana:', captions);
-    let ts = []
-    for (let i in captions) {
-        let caption = captions[i]
-        if (!caption || !caption.text) continue;
-        
-        let text = caption.text
-        console.log(i, text, caption);
-        ts.push(text)
-    }
-    
-    // If no valid texts were found, return the original captions
-    if (ts.length === 0) {
-        console.warn('No valid text found in captions for furigana processing');
+
+    let ts = captions.map(c => stripRubyTags(c.text || ''));
+
+    let arr;
+    try {
+        arr = await analyzeFurigana(ts, mode);
+    } catch (err) {
+        console.error('Error processing furigana:', err);
         return captions;
     }
-    
-    analyzeFurigana(ts).then((arr) => {
-        console.log('Furigana analysis result:', arr);
-        if (!arr || arr.length === 0) return;
-        
-        for (let i in arr) {
-            if (i >= captions.length) break;
-            
-            let caption = arr[i]
-            if (!caption) continue;
-            
-            let rubyText = `<ruby>`;
-            for (let t of arr) {
-                if (!t || t.length < 2) continue;
-                
-                let kj = t[0]
-                let kn = t[1]
-                kn = kj == kn ? '' : kn
-                rubyText += `${kj}<rt>${kn}</rt>`
-            }
-            rubyText += `</ruby>`;
-            
-            if (captions[i]) {
-                captions[i].text = rubyText;
-            }
+
+    for (let i in arr) {
+        if (i >= captions.length) break;
+
+        let rubyText = `<ruby>`;
+        for (let t of arr[i]) {
+            if (!t || t.length < 2) continue;
+
+            let kj = t[0];
+            let kn = t[1];
+            kn = kj === kn ? '' : kn;
+
+            const wordType = getWordType(kj, kn);
+            const color = colorMap[wordType] || colorMap.default;
+
+            rubyText += `<span style="color:${color}">${kj}<rt>${kn}</rt></span>`;
         }
-    }).catch(err => {
-        console.error('Error processing furigana:', err);
-    });
-    
+        rubyText += `</ruby>`;
+
+        captions[i].text = rubyText;
+    }
+
     return captions;
 }
 function createApp() {
@@ -126,7 +130,13 @@ function createApp() {
             selectCaption: function (caption) {
                 this.$emit('select-caption', caption, this.calcCaptionOffset(caption))
             },
-            displaySidebarCaption: function (text) {
+            // Only use getSourceName for UI display, not for caption text
+            getCaptionText: function(caption) {
+                if (!caption) return '';
+                return caption.text || '';
+            },
+            displaySidebarCaption: function (caption) {
+                var text = this.getCaptionText(caption);
                 return "\n" + text.split("\n").map(Utils.wrapInP).join("");
             },
             displayCaptionOffset: function (caption) {
@@ -169,7 +179,7 @@ function createApp() {
                       :data-caption-id="caption.id"
                       :data-start="caption.startTime"
                       :data-end="caption.endTime"
-                      v-html="displaySidebarCaption(caption.text)">
+                      v-html="displaySidebarCaption(caption)">
                     </span>
                     <span v-if="isOffsetMode" class='caption-time-offset unselectable' v-html="displayCaptionOffset(caption)"></span>
                   </span>
@@ -550,16 +560,6 @@ function createApp() {
                     // Sort by lane to ensure proper stacking order
                     sourceCaptions.sort(self.compareByLane);
                     
-                    // Add a source identifier if there are multiple sources
-                    if (Object.keys(captionsBySource).length > 1) {
-                        // Get a readable source name
-                        var sourceName = self.getSourceName(sourceId);
-                        if (sourceName) {
-                            // Add a source identifier line with styling
-                            lines.push('<div class="caption-source-identifier">' + sourceName + '</div>');
-                        }
-                    }
-                    
                     // Process captions from this source
                     sourceCaptions.forEach(function(caption) {
                         if (!caption || !caption.text) return;
@@ -762,6 +762,13 @@ function createApp() {
                     var stopEvent = function () {
                         e.preventDefault();
                         e.stopPropagation();
+                        // Ensure the video element keeps focus after key presses
+                        var videoElement = self.getVideoElement();
+                        if (videoElement) {
+                            setTimeout(function() {
+                                videoElement.focus();
+                            }, 10);
+                        }
                     }
                     switch (e.key) {
                         case ' ':
@@ -1158,6 +1165,14 @@ function createApp() {
                 // Update captions immediately and schedule another update after a short delay
                 this.updateActiveCaptions();
                 setTimeout(this.updateActiveCaptions.bind(this), 50);
+                
+                // Ensure video element keeps focus
+                var videoElement = this.getVideoElement();
+                if (videoElement) {
+                    setTimeout(function() {
+                        videoElement.focus();
+                    }, 10);
+                }
             },
             
             updateActiveCaptions: function() {
@@ -1713,36 +1728,26 @@ function createApp() {
                 return track;
             },
 
-            furigana: function (sourceId) {
+            furigana: async function (sourceId) {
                 console.log('[DEBUG] furigana - sourceId:', sourceId);
+            
                 if (!this.captions[sourceId]) {
                     console.log('[DEBUG] furigana - No captions for sourceId');
                     return;
                 }
-                
+            
                 if (this.savedSettings.furiganaMode === 'none') {
                     console.log('[DEBUG] furigana - furiganaMode is none, skipping');
                     return;
                 }
-                    
-                var captions = this.captions[sourceId];
-                console.log('[DEBUG] furigana - Processing', captions.length, 'captions');
-                var mode = this.savedSettings.furiganaMode;
+            
+                const mode = this.savedSettings.furiganaMode;
                 console.log('[DEBUG] furigana - mode:', mode);
-                var self = this;
-                
-                captions.forEach(function (caption, index) {
-                    if (caption.text.trim().length === 0) {
-                        console.log('[DEBUG] furigana - Caption', index, 'is empty, skipping');
-                        return;
-                    }
-                    
-                    console.log('[DEBUG] furigana - Before processing caption', index, ':', caption.text);
-                    caption.text = analyzeFurigana(caption.text, mode);
-                    console.log('[DEBUG] furigana - After processing caption', index, ':', caption.text);
-                });
+            
+                this.captions[sourceId] = await furiganas(this.captions[sourceId], mode);
+            
                 console.log('[DEBUG] furigana - Finished processing furigana');
-            },
+            },            
 
             onVideoLoad: function (e) {
                 var video = this.getVideoElement();
