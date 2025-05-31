@@ -59,41 +59,43 @@ function toggleControls() {
         toggleControls();
     }
     }
-var analyzeFurigana = async function (text, mode = 'A') {
-    const url = `${API_URL}/furiganas`;
-    const payload = {
-        text,
-        mode,
-    };
-
-    const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-    });
-
-    if (!response.ok) {
-        throw new Error('An error occurred while analyzing the furigana.');
-    }
-
-    const data = await response.json();
-    return data;
-}
 const colorMap = {
     particle: '#ff69b4', // pink
-    kanji: '#74ebff',    // blue
+    kanji: '#6969ff',    // blue
     kana: '#32ed32',     // green
     default: '#ffffff',  // white
 };
 
+// Function to check if text contains Japanese characters
+function isJapanese(text) {
+    if (!text) return false;
+    return /[\u3000-\u303f\u3040-\u309f\u30a0-\u30ff\uff00-\uff9f\u4e00-\u9faf\u3400-\u4dbf]/.test(text);
+}
+
+// Function to check if a character is a Japanese particle
+function isParticleChar(char) {
+    const particles = ['は', 'が', 'を', 'に', 'で', 'と', 'へ', 'も', 'や', 'の', 'から', 'まで', 'か', 'よ', 'ね', 'さ', 'わ', 'な', 'ぞ', 'ぜ', 'とも', 'かしら', 'っけ', 'の', 'ん', 'もの', 'こと', 'ばかり', 'だけ', 'ほど', 'くらい', 'など', 'やら', 'か', 'だの', 'だに', 'すら', 'さえ', 'でも', 'こそ', 'しか', 'ばかり', 'まで', 'ばかり', 'ほど', 'くらい', 'など', 'やら', 'か', 'だの', 'だに', 'すら', 'さえ', 'でも', 'こそ', 'しか'];
+    return particles.includes(char);
+}
+
 function getWordType(kj, kn) {
+    if (!kj) return 'default';
+    
+    // Check for particles first
+    if (kj.length === 1 && isParticleChar(kj)) {
+        return 'particle';
+    }
+    
     const isKana = (s) => /^[\u3040-\u309F\u30A0-\u30FFー]+$/.test(s);
     const isKanji = (s) => /[\u4e00-\u9faf]/.test(s);
-    const isParticle = ['は', 'が', 'を', 'に', 'で', 'と', 'へ', 'も', 'や', 'の', 'から', 'まで'].includes(kj);
-
-    if (isParticle) return 'particle';
+    
+    // Check for particles in the text
+    for (let i = 0; i < kj.length; i++) {
+        if (isParticleChar(kj[i])) {
+            return 'particle';
+        }
+    }
+    
     if (isKanji(kj)) return 'kanji';
     if (isKana(kj)) return 'kana';
     return 'default';
@@ -102,63 +104,6 @@ function stripRubyTags(html) {
     return html.replace(/<ruby>|<\/ruby>|<rt>.*?<\/rt>/g, '');
 }
 
-async function furiganas(captions, mode = 'A') {
-    if (!captions || !Array.isArray(captions) || captions.length === 0) {
-        console.warn('Invalid captions provided to furiganas:', captions);
-        return captions;
-    }
-
-    // Build an array of raw texts for only unprocessed captions
-    const toProcess = [];
-    const indexes = [];
-    captions.forEach((c, idx) => {
-        if (!c.furiganaApplied && c.text && c.text.trim()) {
-        toProcess.push(stripRubyTags(c.text));
-        indexes.push(idx);
-        }
-    });
-
-    if (toProcess.length === 0) {
-        // Nothing new to do
-        return captions;
-    }
-
-    let arr;
-    try {
-        arr = await analyzeFurigana(toProcess, mode);
-    } catch (err) {
-        console.error('Error processing furigana:', err);
-        return captions;
-    }
-
-    // arr corresponds 1:1 to toProcess[], which maps to captions[indexes[i]]
-    for (let i = 0; i < arr.length; i++) {
-        const capIdx = indexes[i];
-        const pairs = arr[i];
-        if (!pairs || pairs.length === 0) continue;
-
-        // Rebuild ruby+color for this caption
-        let rubyText = '';
-        for (let t of pairs) {
-        if (!t || t.length < 2) continue;
-        const [kj, rawKn] = t;
-        const kn = kj === rawKn ? '' : rawKn;
-        const wordType = getWordType(kj, kn);
-        const color = colorMap[wordType] || colorMap.default;
-        if (kn) {
-            // put color on the <ruby> wrapper itself
-            rubyText += `<ruby style="color:${color}">${kj}<rt>${kn}</rt></ruby>`;
-        } else {
-            rubyText += `<span style="color:${color}">${kj}</span>`;
-        }
-        }
-
-        captions[capIdx].text = rubyText;
-        captions[capIdx].furiganaApplied = true;
-    }
-
-    return captions;
-    }  
 function createApp() {
     var Utils = {
         parseInputNum: function (num) {
@@ -849,14 +794,27 @@ function createApp() {
                             stopEvent(e);
                             self.replayCaption();
                             break;
-                        case 'ArrowLeft':
                         case 'ArrowUp':
+                            // Toggle visibility of captions
+                            if (eitherNG)
+                                return;
+                            stopEvent(e);
+                            self.shouldShowMainCaption = !self.shouldShowMainCaption;
+                            self.notify(self.shouldShowMainCaption ? 'Subtitles shown' : 'Subtitles hidden');
+                            break;
+                        case 'ArrowLeft':
                             if (eitherNG)
                                 return;
                             stopEvent(e);
                             self.previousCaption();
                             break;
                         case 'ArrowDown':
+                            // replay current caption
+                            if (eitherNG)
+                                return;
+                            stopEvent(e);
+                            self.replayCaption();
+                            break;
                         case 'ArrowRight':
                             if (eitherNG)
                                 return;
@@ -2249,30 +2207,58 @@ function createApp() {
                     console.warn('Invalid source or index for ruby function');
                     return;
                 }
-                if(!arr || !arr.length){
+                if(!arr || !arr.length) {
                     console.warn('Invalid furigana array for ruby function');
+                    // If no furigana data but text exists, handle it appropriately
+                    const text = this.captions[sourceId][index].text;
+                    if (text && !text.includes("<p>") && !isJapanese(text)) {
+                        this.captions[sourceId][index].text = `<p>${text}</p>`;
+                    }
                     return;
                 }
-                if(this.captions[sourceId][index].text.includes("<ruby")){
+                
+                if(this.captions[sourceId][index].text.includes("<ruby")) {
                     console.warn('Caption already contains ruby tags');
                     return;
                 }
-                // Reset the caption text to prevent stacking
+                
+                const originalText = this.captions[sourceId][index].text;
                 this.captions[sourceId][index].text = "";
                 console.log('[DEBUG] ruby - Processing furigana for caption', index, 'in source', sourceId);
 
+                let hasJapanese = false;
+                let hasNonJapanese = false;
+                let processedText = "";
+                
+                // First pass: check if we have mixed content
+                for (let t of arr) {
+                    const text = typeof t === "object" ? t[0] : t;
+                    if (isJapanese(text)) {
+                        hasJapanese = true;
+                    } else if (text.trim().length > 0) {
+                        hasNonJapanese = true;
+                    }
+                }
+                
+                // Process each token
                 for (let t of arr) {
                     try {
                         let kj = typeof t === "object" ? t[0] : t;
                         let kn = typeof t === "object" ? t[1] : "";
-                        kn = kj == kn ? "" : kn;
+                        kn = kj === kn ? "" : kn;
                         
-                        // Skip processing if no furigana is needed
-                        if (typeof t !== 'object' || !kn) {
-                            this.captions[sourceId][index].text += kj;
+                        // Handle non-Japanese text
+                        if (!isJapanese(kj)) {
+                            if (hasJapanese && hasNonJapanese) {
+                                // If we have mixed content, wrap non-Japanese in <p> tags
+                                processedText += `<p>${kj}</p>`;
+                            } else {
+                                processedText += kj;
+                            }
                             continue;
                         }
                         
+                        // Process Japanese text with furigana
                         let kja = kj.split('');
                         let kna = kn.split('');
                         let ka = [];
@@ -2293,27 +2279,29 @@ function createApp() {
                             }
                         }
                         
-                        // Only create ruby if we have furigana text
+                        // Create ruby for Japanese text
                         if (kna.length > 0) {
                             let wordType = getWordType(kja.join(''), kna.join(''));
                             const color = colorMap[wordType] || colorMap.default;
-                            let rubyText = `<ruby style="color:${color}">${kja.join('')}<rt>${kna.join('')}</rt></ruby>${ka.join('')}`;
-                            this.captions[sourceId][index].text += rubyText;
+                            processedText += `<ruby style="color:${color}">${kja.join('')}<rt>${kna.join('')}</rt></ruby>${ka.join('')}`;
                         } else {
-                            this.captions[sourceId][index].text += kja.join('') + ka.join('');
+                            processedText += kja.join('') + ka.join('');
                         }
                     } catch (e) {
                         console.error('Error processing furigana:', e);
                         // Fallback: just add the original text
-                        if (typeof t === 'object') {
-                            this.captions[sourceId][index].text += t[0];
+                        const text = typeof t === 'object' ? t[0] : t;
+                        if (isJapanese(text)) {
+                            processedText += text;
                         } else {
-                            this.captions[sourceId][index].text += t;
+                            processedText += `<p>${text}</p>`;
                         }
                     }
                 }
-
-                console.log('[DEBUG] ruby - Processed caption:', this.captions[sourceId][index].text);
+                
+                // Set the final processed text
+                this.captions[sourceId][index].text = processedText;
+                console.log('[DEBUG] ruby - Processed caption:', processedText);
             },
             furigana: async function (sourceId, limit = 50) {
                 try {
