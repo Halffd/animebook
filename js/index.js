@@ -652,11 +652,6 @@ function createApp() {
                         // Add the caption lines to our display
                         lines = captionLines.concat(lines);
                     });
-                    
-                    // Add a separator between different sources if there are multiple sources
-                    if (Object.keys(captionsBySource).length > 1) {
-                        lines.push('<div class="caption-source-separator"></div>');
-                    }
                 });
 
                 return lines;
