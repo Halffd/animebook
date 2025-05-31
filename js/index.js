@@ -51,48 +51,61 @@ function stripRubyTags(html) {
 
 async function furiganas(captions, mode = 'A') {
     if (!captions || !Array.isArray(captions) || captions.length === 0) {
-        console.warn('Invalid captions provided to furiganas function:', captions);
+        console.warn('Invalid captions provided to furiganas:', captions);
         return captions;
     }
 
-    let ts = captions.map(c => stripRubyTags(c.text || ''));
+    // Build an array of raw texts for only unprocessed captions
+    const toProcess = [];
+    const indexes = [];
+    captions.forEach((c, idx) => {
+        if (!c.furiganaApplied && c.text && c.text.trim()) {
+        toProcess.push(stripRubyTags(c.text));
+        indexes.push(idx);
+        }
+    });
+
+    if (toProcess.length === 0) {
+        // Nothing new to do
+        return captions;
+    }
 
     let arr;
     try {
-        arr = await analyzeFurigana(ts, mode);
+        arr = await analyzeFurigana(toProcess, mode);
     } catch (err) {
         console.error('Error processing furigana:', err);
         return captions;
     }
 
-    for (let i in arr) {
-        if (i >= captions.length) break;
-    
-        let parts = [];
-        for (let t of arr[i]) {
-            if (!t || t.length < 2) continue;
-    
-            let kj = t[0];
-            let kn = t[1];
-            kn = kj === kn ? '' : kn;
-    
-            const wordType = getWordType(kj, kn);
-            const color = colorMap[wordType] || colorMap.default;
-    
-            if (kn) {
-                parts.push(
-                    `<ruby style="color: ${color} !important">${kj}<rt>${kn}</rt></ruby>`
-                );
-            } else {
-                parts.push(`<span style="color: ${color} !important">${kj}</span>`);
-            }
+    // arr corresponds 1:1 to toProcess[], which maps to captions[indexes[i]]
+    for (let i = 0; i < arr.length; i++) {
+        const capIdx = indexes[i];
+        const pairs = arr[i];
+        if (!pairs || pairs.length === 0) continue;
+
+        // Rebuild ruby+color for this caption
+        let rubyText = '';
+        for (let t of pairs) {
+        if (!t || t.length < 2) continue;
+        const [kj, rawKn] = t;
+        const kn = kj === rawKn ? '' : rawKn;
+        const wordType = getWordType(kj, kn);
+        const color = colorMap[wordType] || colorMap.default;
+        if (kn) {
+            // put color on the <ruby> wrapper itself
+            rubyText += `<ruby style="color:${color}">${kj}<rt>${kn}</rt></ruby>`;
+        } else {
+            rubyText += `<span style="color:${color}">${kj}</span>`;
         }
-    
-        captions[i].text = parts.join('');
-    }    
+        }
+
+        captions[capIdx].text = rubyText;
+        captions[capIdx].furiganaApplied = true;
+    }
 
     return captions;
-}
+    }  
 function createApp() {
     var Utils = {
         parseInputNum: function (num) {
@@ -1731,28 +1744,7 @@ function createApp() {
                 
                 console.log('[DEBUG] getTrack - Returning track 0');
                 return track;
-            },
-
-            furigana: async function (sourceId) {
-                console.log('[DEBUG] furigana - sourceId:', sourceId);
-            
-                if (!this.captions[sourceId]) {
-                    console.log('[DEBUG] furigana - No captions for sourceId');
-                    return;
-                }
-            
-                if (this.savedSettings.furiganaMode === 'none') {
-                    console.log('[DEBUG] furigana - furiganaMode is none, skipping');
-                    return;
-                }
-            
-                const mode = this.savedSettings.furiganaMode;
-                console.log('[DEBUG] furigana - mode:', mode);
-            
-                this.captions[sourceId] = await furiganas(this.captions[sourceId], mode);
-            
-                console.log('[DEBUG] furigana - Finished processing furigana');
-            },            
+            },                    
 
             onVideoLoad: function (e) {
                 var video = this.getVideoElement();
@@ -2194,7 +2186,14 @@ function createApp() {
                     console.warn('Invalid source or index for ruby function');
                     return;
                 }
-                
+                if(!arr || !arr.length){
+                    console.warn('Invalid furigana array for ruby function');
+                    return;
+                }
+                if(this.captions[sourceId][index].text.includes("<ruby")){
+                    console.warn('Caption already contains ruby tags');
+                    return;
+                }
                 // Reset the caption text to prevent stacking
                 this.captions[sourceId][index].text = "";
                 console.log('[DEBUG] ruby - Processing furigana for caption', index, 'in source', sourceId);
@@ -2233,7 +2232,9 @@ function createApp() {
                         
                         // Only create ruby if we have furigana text
                         if (kna.length > 0) {
-                            let rubyText = `<ruby>${kja.join('')}<rt>${kna.join('')}</rt></ruby>${ka.join('')}`;
+                            let wordType = getWordType(kja.join(''), kna.join(''));
+                            const color = colorMap[wordType] || colorMap.default;
+                            let rubyText = `<ruby style="color:${color}">${kja.join('')}<rt>${kna.join('')}</rt></ruby>${ka.join('')}`;
                             this.captions[sourceId][index].text += rubyText;
                         } else {
                             this.captions[sourceId][index].text += kja.join('') + ka.join('');
@@ -2293,24 +2294,17 @@ function createApp() {
                                 .catch((error) => {
                                     console.error('Error in makeFurigana for caption', i, ':', error);
                                 });
-
-                            //  promises.push(promise);
-
-                            // Check if the number of promises exceeds the limit
-                            if (promises.length >= limit) {
-                                //    await Promise.all(promises);
-                                //    promises.length = 0; // Clear the promises array
+                            promises.push(promise);
+                        } catch (e) {
+                            console.error(e);
                         }
-                    } catch (e) {
-                        console.error(e);
                     }
-                }
                 } catch (e) {
-                console.error(e);
-                console.trace();
+                  console.error(e);
+                  console.trace();
                 }
                 // Wait for any remaining promises to resolve
-                // await Promise.all(promises);
+                 await Promise.all(promises);
             },
             fileToCaptions: function (text, offset, customOffsets) {
                 var parsed = this.vttToCaptions(text) || this.assToCaptions(text) || this.srtToCaptions(text);
