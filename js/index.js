@@ -494,7 +494,13 @@ Vue.component('video-list', {
             </div>
             <div v-if="videos.length" class="fixed bottom-0 left-0 right-0 p-4 bg-gray-900 border-t border-gray-800 flex justify-center items-center gap-4">
               <small class="text-gray-400">{{ selectedCount ? selectedCount + ' selected' : 'No selection' }}</small>
-              <button class="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700" @click="playSelected" :disabled="!selectedCount">Play Selected</button>
+              <button class="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700" 
+                      @click="playSelected" 
+                      :disabled="!selectedCount"
+                      @keyup.enter="playSelected"
+                      :class="{'opacity-50 cursor-not-allowed': !selectedCount}">
+                Play Selected
+              </button>
               <small class="text-gray-400">Enter=Play • Ctrl+A=Select All</small>
             </div>
           </div>`,
@@ -660,6 +666,7 @@ Vue.component('video-list', {
             const selected = this.files.filter(f => this.selectedVideos.has(f.path));
             if (!selected.length) return;
             
+            // Emit the select event to the parent component
             if (selected.length === 1) {
               this.onVideoSelected(selected[0]);
             } else {
@@ -669,14 +676,20 @@ Vue.component('video-list', {
                 url: `/videos${video.path.startsWith('/') ? '' : '/'}${video.path}`
               })));
             }
-            this.clearSelection();
           },
           emitSelect(v) {
             this.onVideoSelected(v);
           },
           handleKeyDown(e) {
-            if(e.key==='Enter' && this.selectedCount) this.playSelected();
-            if((e.ctrlKey||e.metaKey)&&e.key==='a'){e.preventDefault();this.selectAll();}
+            if (e.key === 'Enter' && this.selectedCount && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+              e.preventDefault();
+              e.stopPropagation();
+              this.playSelected();
+            } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+              e.preventDefault();
+              e.stopPropagation();
+              this.selectAll();
+            }
           }
         },
         mounted() {
@@ -694,26 +707,164 @@ Vue.component('video-list', {
 function createApp() {
     var vm = new Vue({
         el: "#app",
-        template: `
+        template: `<div>
+  <div v-show="showVideoList" class="video-list-view"
+    style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 9999; background: #1a1a1a; color: white;">
+    <div class="video-list-container">
+      <video-list ref="videoList" @select="onVideoSelected" @playlist="onPlaylistReceived"></video-list>
+    </div>
+  </div>
+  
+  <div v-show="!showVideoList">
+    <div id="animebook-drop-wrapper" class="drop-wrapper" :class="dropWrapperClass"
+      @dragover.prevent="onFileDragover" @dragleave="onFileDragleave" @drop.prevent="handleFileDrop">
+      <div class="app-container" :style="calcAppStyle()" v-cloak>
+        <input id="ab-file-browse-input" @change="onFileInputChange" type="file"
+          accept=".srt,.ass,.vtt,.mp3,.m4a,.aac,.flac,.ogg,.wav,.opus,.mkv,.mp4,.avi" multiple hidden />
+        
+        <div style="display: none;">
+          <svg id="svg-library" viewBox="0 0 1792 1792">
+            <path id="plus-svg"
+              d="M9.5 7.5v-1q0-0.203-0.148-0.352t-0.352-0.148h-2v-2q0-0.203-0.148-0.352t-0.352-0.148h-1q-0.203 0-0.352 0.148t-0.148 0.352v2h-2q-0.203 0-0.352 0.148t-0.148 0.352v1q0 0.203 0.148 0.352t0.352 0.148h2v2q0 0.203 0.148 0.352t0.352 0.148h1q0.203 0 0.352-0.148t0.148-0.352v-2h2q0.203 0 0.352-0.148t0.148-0.352zM12 7q0 1.633-0.805 3.012t-2.184 2.184-3.012 0.805-3.012-0.805-2.184-2.184-0.805-3.012 0.805-3.012 2.184-2.184 3.012-0.805 3.012 0.805 2.184 2.184 0.805 3.012z" />
+            <path id="spinner-svg"
+              d="M526 1394q0 53-37.5 90.5t-90.5 37.5q-52 0-90-38t-38-90q0-53 37.5-90.5t90.5-37.5 90.5 37.5 37.5 90.5zm498 206q0 53-37.5 90.5t-90.5 37.5-90.5-37.5-37.5-90.5 37.5-90.5 90.5-37.5 90.5 37.5 37.5 90.5zm-704-704q0 53-37.5 90.5t-90.5 37.5-90.5-37.5-37.5-90.5 37.5-90.5 90.5-37.5 90.5 37.5 37.5 90.5zm1202 498q0 52-38 90t-90 38q-53 0-90.5-37.5t-37.5-90.5 37.5-90.5 90.5-37.5 90.5 37.5 37.5 90.5zm-964-996q0 66-47 113t-113 47-113-47-47-113 47-113 113-47 113 47 47 113zm1170 498q0 53-37.5 90.5t-90.5 37.5-90.5-37.5-37.5-90.5 37.5-90.5 90.5-37.5 90.5 37.5 37.5 90.5zm-640-704q0 80-56 136t-136 56-136-56-56-136 56-136 136-56 136 56 56 136zm530 206q0 93-66 158.5t-158 65.5q-93 0-158.5-65.5t-65.5-158.5q0-92 65.5-158t158.5-66q92 0 158 66t66 158z" />
+            <path id="success-svg"
+              d="M1412 734q0-28-18-46l-91-90q-19-19-45-19t-45 19l-408 407-226-226q-19-19-45-19t-45 19l-91 90q-18 18-18 46 0 27 18 45l362 362q19 19 45 19 27 0 46-19l543-543q18-18 18-45zm252 162q0 209-103 385.5t-279.5 279.5-385.5 103-385.5-103-279.5-279.5-103-385.5 103-385.5 279.5-279.5 385.5-103 385.5 103 279.5 279.5 103 385.5z" />
+            <path id="alert-svg"
+              d="M896 128q209 0 385.5 103t279.5 279.5 103 385.5-103 385.5-279.5 279.5-385.5 103-385.5-103-279.5-279.5-103-385.5 103-385.5 279.5-279.5 385.5-103zm128 1247v-190q0-14-9-23.5t-22-9.5h-192q-13 0-23 10t-10 23v190q0 13 10 23t23 10h192q13 0 22-9.5t9-23.5zm-2-344l18-621q0-12-10-18-10-8-24-8h-220q-14 0-24 8-10 6-10 18l17 621q0 10 10 17.5t24 7.5h185q14 0 23.5-7.5t10.5-17.5z" />
+          </svg>
+        </div>
+        
+        <div class="video-subtitles-missing hint" v-show="!videoUrl && !captionsUrl">
+          <p>Drag-and-drop a video file and subtitle file to this page, or <a href="#" @click="onFileBrowse">browse</a></p>
+        </div>
+        
+        <div class="video-missing" v-show="!videoUrl && captionsUrl && !shouldShowVideoError">
+          <div class="hint">
+            <p>Drag-and-drop a video file, or <a href="#" @click="onFileBrowse">browse</a></p>
+          </div>
+        </div>
+        
+        <div class="subtitles-missing" v-show="videoUrl && !captionsUrl && !shouldShowSubtitlesError">
+          <div class="hint">
+            <p>Drag-and-drop a subtitles file (vtt, srt or ass), or <a href="#" @click="onFileBrowse">browse</a></p>
+          </div>
+        </div>
+        
+        <div class="video-error" v-show="shouldShowVideoError">
+          <div class="hint">
             <div>
-                <div v-show="showVideoList" class="video-list-view" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 9999; background: #1a1a1a; color: white;">
-                    <div class="video-list-container">
-                        <video-list 
-                            ref="videoList"
-                            @select="onVideoSelected"
-                            @playlist="onPlaylistReceived"
-                        ></video-list>
-                    </div>
-                </div>
-                <div v-show="!showVideoList">
-                    <!-- Your existing video player UI goes here -->
-                    <div class="video-player">
-                        <video id="ab-video-element" controls :src="videoUrl"></video>
-                        <button @click="toggleVideoList" class="back-button">Back to Videos</button>
-                    </div>
-                </div>
+              There was an error loading the video file {{videoFileName}}.
+              Try a different file. Note that your browser may not support certain file formats like HEVC/H.265 video or
+              AC3 audio.
+              See <a href="#" @click="toggleHelp(); enableHelpMode('tips')" class="monospace unselectable">Tips</a>.
             </div>
-        `,
+            <br>
+            <div style="font-size: 1.5rem;" v-if="videoErrorMessage">
+              Browser error message: <span class="monospace">{{videoErrorMessage}}</span>
+            </div>
+          </div>
+        </div>
+        
+        <div class="subtitles-error" v-show="shouldShowSubtitlesError">
+          <div class="hint">
+            There was an error parsing the subtitles file {{subtitlesFileName}}.
+            <span v-if="subtitlesError">{{subtitlesError}}</span>
+          </div>
+        </div>
+        
+        <div :class="notifyTextClass" v-if="notifyText" v-html="notifyText"></div>
+        
+        <!-- Replace the simple video with your full video wrapper -->
+        <div class="video-wrapper" :class="videoContainerClass" v-show="videoUrl && !shouldShowVideoError">
+          <video id="ab-video-element" class="video-element" :style="videoStyle" :src="videoUrl" @error="onVideoError"
+            @timeupdate="onTimeUpdate" crossorigin="anonymous" :controls="savedSettings.showVideoControls"
+            disablePictureInPicture tabIndex="-1" @focus="onVideoFocus" @click="onVideoClick" @seeked="onVideoSeek"
+            @loadeddata="onVideoLoad" preload="auto" playsinline webkit-playsinline x5-playsinline
+            x5-video-player-type="h5" x5-video-player-fullscreen="true" x5-video-orientation="landscape"
+            :key="videoKey">
+            <track v-if="captionsUrl" :key="trackKey" kind="subtitles" :src="captionsUrl" @load="onCaptionsLoad"
+              @cuechange="onCaptionsCueChange" default />
+            <p>Your browser doesn't support HTML5 video. Here is a <a :href="videoUrl">link to the video</a> instead.</p>
+          </video>
+
+          <span class="current-caption"
+            :style="'font-size: calc(' + (3.5 * savedSettings.subtitleFontSize) + 'vmin + 1.50rem);'"
+            :key="shownCaptionsKey" lang="ja" v-html="displayedHtml"></span>
+        </div>
+
+        <button @click="toggleVideoList" class="back-button">Back to Videos</button>
+
+        <span id="ab-meta-data" style="display: none;" :data-audio-track="selectedAudioTrack || 0"></span>
+        <div id="resize-bar-wrapper" class="resize-bar-wrapper" lang="ja">
+          <div id="ab-extension-popup-wrapper"></div>
+          <div class="resize-bar" @click.stop.prevent="onResizeBarClick" @mousedown.stop.prevent="onResizeBarMouseDown"></div>
+        </div>
+        
+        <div class="sidebar">
+          <caption-bar @select-caption="selectCaption" @set-custom-offset="setCustomOffset"
+            @switch-source="switchCaptionSource" :captions="captions" :custom-offsets="customOffsets"
+            :is-auto-pause-mode="isAutoPauseMode" :is-offset-mode="isOffsetMode" :current-time="currentTime"
+            v-if="captionsUrl" :caption-sources="captionSources"
+            :active-caption-source="activeCaptionSource"></caption-bar>
+            
+          <div v-if="captionsUrl && isOffsetMode" class="offset-hint unselectable">Select the subtitle that ends where
+            the video currently is: {{displayAsVideoTime(currentTime)}}</div>
+            
+          <div class="auto-pause-text unselectable" v-if="isAutoPauseMode">Auto Pause <span
+              style="display: inline-block;">:</span><span v-html="autoPauseIcon"></span></div>
+              
+          <div v-if="captionsUrl" class="controls">
+            <a tabindex="4" :class="helpClass" @click="toggleHelp(); enableHelpMode('hotkeys')"><span>?</span></a>
+            <a v-if="audioTracks && audioTracks.length > 1" tabindex="3" :class="audioTrackClass"
+              @click="cycleAudioTrack()"><span>{{selectedAudioTrack + 1}}/{{audioTracks.length}}</span></a>
+            <input form="novalidatedform" type="number" step="0.1" tabindex="2" @keydown="onInputKeyDown"
+              @wheel="onOffsetInputScroll" class="offset-input" v-model="subtitlesOffsetInput" />
+            <a tabindex="1" :class="offsetButtonClass" @click="toggleOffsetMode()">
+              <span class="offset-text">{{this.isOffsetMode ? 'Cancel' : 'Offset Subtitles'}}</span>
+            </a>
+          </div>
+        </div>
+        
+        <div v-if="shouldShowHelpPopup" class="help-popup">
+          <div class="exit-popup unselectable" @click="toggleHelp()">&times;</div>
+          <div class="help-mode-tab-container">
+            <div :class="helpButtonClass('hotkeys')" @click="enableHelpMode('hotkeys')">Hotkeys</div>
+            <div :class="helpButtonClass('appearance')" @click="enableHelpMode('appearance')">Appearance</div>
+            <div :class="helpButtonClass('tips')" @click="enableHelpMode('tips')">Tips</div>
+            <div :class="helpButtonClass('anki-automatic-export')" @click="enableHelpMode('anki-automatic-export')">Anki Export</div>
+          </div>
+          
+          <div v-if="helpMode === 'hotkeys'" class="help-inner">
+            <div class="table">
+              <div class="table-row">
+                <div class="table-head">Command</div>
+                <div class="table-head">Description</div>
+              </div>
+              <div class="table-row">
+                <div class="table-cell">Left/Right</div>
+                <div class="table-cell">Move backward/forward</div>
+              </div>
+              <!-- Table rows truncated for brevity -->
+            </div>
+          </div>
+          
+          <div v-if="helpMode === 'appearance'" class="help-inner" style="font-size: 1.2rem;">
+            <!-- Content truncated for brevity -->
+          </div>
+          
+          <div v-if="helpMode === 'tips'" class="help-inner">
+            <!-- Content truncated for brevity -->
+          </div>
+          
+          <div v-if="helpMode === 'anki-automatic-export'" class="help-inner">
+            <!-- Content truncated for brevity -->
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>`,
         data: {
             // Video list related
             showVideoList: true,
@@ -1111,16 +1262,35 @@ function createApp() {
             }
         },
         methods: {
+            onVideoLoad: function (e) {
+                var video = this.getVideoElement();
+                if (!video.audioTracks || video.audioTracks.length === 0) {
+                    this.audioTracks = null;
+                    this.selectedAudioTrack = null;
+                    return;
+                }
 
-    getVideoElement() {
-        return document.getElementById('ab-video-element');
-      },
-      toggleVideoList() {
-        this.showVideoList = !this.showVideoList;
-        if (this.showVideoList && this.$refs.videoList) {
-          this.$refs.videoList.loadVideos();
-        }
-      },
+                var areNewTracksSameCount = this.audioTrackCount && this.audioTrackCount === video.audioTracks.length;
+                var previousSelectedAudioTrack = this.selectedAudioTrack;
+
+                this.audioTracks = video.audioTracks;
+                this.audioTrackCount = video.audioTracks.length;
+                this.selectedAudioTrack = -1; // force update of the audio track button; it won't update if selectedAudioTrack doesn't change
+                if (previousSelectedAudioTrack && previousSelectedAudioTrack < this.audioTracks.length && areNewTracksSameCount)
+                    this.selectedAudioTrack = previousSelectedAudioTrack;
+                else
+                    this.selectedAudioTrack = 0;
+                this.enableAudioTrack(this.selectedAudioTrack);
+            },
+            getVideoElement() {
+                return document.getElementById('ab-video-element');
+            },
+            toggleVideoList() {
+                this.showVideoList = !this.showVideoList;
+                if (this.showVideoList && this.$refs.videoList) {
+                    this.$refs.videoList.loadVideos();
+                }
+            },
             onVideoSelected(video) {
                 if (!video || !video.url) {
                   console.error('Invalid video object:', video);
@@ -1131,29 +1301,29 @@ function createApp() {
                 this.showVideoList = false;
                 this.videoUrl = video.url;
                 this.currentVideo = video;
-                
+                this.shouldShowVideoError = false;
+                this.videoErrorMessage = null;
+                this.videoFileName = video.name;
                 var self = this;
                 this.$nextTick(function() {
-                  var videoEl = self.getVideoElement();
-                  if (videoEl) {
-                    if (videoEl.src !== self.videoUrl) {
-                      videoEl.src = self.videoUrl;
+                    var videoEl = self.getVideoElement();
+                    if (videoEl) {
+                        videoEl.src = self.videoUrl;  // Direct URL assignment
+                        videoEl.load();
+                        videoEl.play().catch(function(e) { 
+                            console.error('Video play error:', e);
+                            videoEl.controls = true;
+                        });
                     }
-                    videoEl.load();
-                    videoEl.play().catch(function(e) { 
-                      console.error('Video play error:', e);
-                      videoEl.controls = true; // Show controls if autoplay fails
-                    });
-                  }
                 });
-              },
-              onPlaylistReceived(playlist) {
+            },
+            onPlaylistReceived(playlist) {
                 if (playlist && playlist.length > 0) {
                   this.videoPlaylist = playlist;
                   this.currentPlaylistIndex = 0;
                   this.onVideoSelected(playlist[0]);
                 }
-              },
+            },
             loadSavedSettings: function () {
                 var json = null;
                 try {
@@ -2126,21 +2296,6 @@ function createApp() {
                 }, 1000);
             },
 
-            displayAsVideoTime: function (seconds) {
-                return new Date(seconds * 1000).toISOString().substr(11, 8).replace(/^00:/g, '');
-            },
-
-            // Video list state
-            showVideoList: true,
-            videoUrl: null,
-            videoPlaylist: [],
-            currentPlaylistIndex: -1,
-            
-            displayAsVideoTime: function(seconds) {
-                return new Date(seconds * 1000).toISOString().substr(11, 8).replace(/^00:/g, '');
-            }
-            },
-
             selectCaption: function (caption, offset) {
                 var previousTextSelection = this.textSelection || '';
                 try {
@@ -2199,27 +2354,6 @@ function createApp() {
                 console.log('[DEBUG] getTrack - Returning track 0');
                 return track;
             },                    
-
-            onVideoLoad: function (e) {
-                var video = this.getVideoElement();
-                if (!video.audioTracks || video.audioTracks.length === 0) {
-                    this.audioTracks = null;
-                    this.selectedAudioTrack = null;
-                    return;
-                }
-
-                var areNewTracksSameCount = this.audioTrackCount && this.audioTrackCount === video.audioTracks.length;
-                var previousSelectedAudioTrack = this.selectedAudioTrack;
-
-                this.audioTracks = video.audioTracks;
-                this.audioTrackCount = video.audioTracks.length;
-                this.selectedAudioTrack = -1; // force update of the audio track button; it won't update if selectedAudioTrack doesn't change
-                if (previousSelectedAudioTrack && previousSelectedAudioTrack < this.audioTracks.length && areNewTracksSameCount)
-                    this.selectedAudioTrack = previousSelectedAudioTrack;
-                else
-                    this.selectedAudioTrack = 0;
-                this.enableAudioTrack(this.selectedAudioTrack);
-            },
 
             enableAudioTrack: function (audioTrackIndex) {
                 for (var i = 0; i < this.audioTracks.length; i++)
@@ -2787,8 +2921,6 @@ function createApp() {
                   console.error(e);
                   console.trace();
                 }
-                // Wait for any remaining promises to resolve
-                 await Promise.all(promises);
             },
             fileToCaptions: function (text, offset, customOffsets) {
                 var parsed = this.vttToCaptions(text) || this.assToCaptions(text) || this.srtToCaptions(text);
@@ -2977,18 +3109,10 @@ function createApp() {
                 setTimeout(function () { URL.revokeObjectURL(a.href); }, 1500);
             }
         }
-    );
+    });
     
     return vm;
 }
 
 console.log("Creating app Date: " + new Date().toISOString().replace('T', ' ').replace('Z', ''));
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', function() {
-        console.log("Creating app Date: " + new Date().toISOString().replace('T', ' ').replace('Z', ''));
-        createApp();
-    });
-} else {
-    console.log("Creating app Date: " + new Date().toISOString().replace('T', ' ').replace('Z', ''));
-    createApp();
-}
+createApp();
