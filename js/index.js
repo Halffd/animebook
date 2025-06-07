@@ -1,4 +1,18 @@
 var API_URL = 'http://127.0.0.1:5000'; // Replace with your API URL
+
+// Enable CORS for all routes
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  'Access-Control-Allow-Credentials': true
+};
+// Helper function to set CORS headers
+function setCorsHeaders(res) {
+  Object.entries(corsHeaders).forEach(([key, value]) => {
+    res.setHeader(key, value);
+  });
+}
 var util
 var mod
 var aDict
@@ -104,8 +118,289 @@ function stripRubyTags(html) {
     return html.replace(/<ruby>|<\/ruby>|<rt>.*?<\/rt>/g, '');
 }
 
-function createApp() {
-    var Utils = {
+// Main app component that will use the video list
+const appComponent = {
+  template: `
+    <div>
+      <div v-if="showVideoList" class="video-list-view">
+        <div class="video-list-container">
+          <video-list 
+            ref="videoList"
+            @select="onVideoSelected"
+            @playlist="onPlaylistReceived"
+          ></video-list>
+        </div>
+      </div>
+      <div v-else>
+        <!-- Main app content will be rendered here -->
+      </div>
+    </div>
+  `,
+  data() {
+    return {
+      showVideoList: true,
+      videoUrl: null,
+      isVideoPlaying: false,
+      isVideoBuffering: false,
+      videoError: null,
+      currentVideo: null,
+      videoPlaylist: [],
+      currentPlaylistIndex: -1,
+    };
+  },
+  methods: {
+    onVideoSelected(video) {
+      if (!video || !video.url) {
+        console.error('Invalid video object:', video);
+        return;
+      }
+      
+      console.log('Video selected:', video);
+      this.showVideoList = false;
+      this.videoUrl = video.url;
+      this.currentVideo = video;
+      
+      var self = this;
+      this.$nextTick(function() {
+        var videoEl = self.getVideoElement();
+        if (videoEl) {
+          if (videoEl.src !== self.videoUrl) {
+            videoEl.src = self.videoUrl;
+          }
+          videoEl.load();
+          videoEl.play().catch(function(e) { 
+            console.error('Video play error:', e);
+            videoEl.controls = true; // Show controls if autoplay fails
+          });
+        }
+      });
+    },
+    onPlaylistReceived(playlist) {
+      if (playlist && playlist.length > 0) {
+        this.videoPlaylist = playlist;
+        this.currentPlaylistIndex = 0;
+        this.onVideoSelected(playlist[0]);
+      }
+    },
+    getVideoElement() {
+      return document.getElementById('ab-video-element');
+    }
+  }
+};
+
+// Video List Component
+Vue.component('video-list', {
+  template: `
+    <div class="video-list">
+      <div class="flex justify-between items-center mb-4">
+        <div class="flex items-center gap-2">
+          <h2 class="text-xl font-semibold">Videos</h2>
+          <div v-if="currentPath.length" class="text-sm text-gray-400">
+            / {{ currentPath.join(' / ') }}
+          </div>
+        </div>
+        <div class="flex items-center gap-2">
+          <button v-if="selectedCount" class="px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700" @click="playSelected">
+            Play Selected ({{ selectedCount }})
+          </button>
+          <button v-if="videos.length" class="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700" @click="selectAll">
+            Select All
+          </button>
+          <button v-if="selectedCount" class="px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700" @click="clearSelection">
+            Clear
+          </button>
+          <button class="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700" @click="loadVideos(currentPath.join('/'))" :disabled="isLoading">
+            Refresh
+          </button>
+        </div>
+      </div>
+      <div v-if="isLoading" class="text-center py-8">Loading videos...</div>
+      <div v-else-if="error" class="text-red-500 py-4">{{ error }}</div>
+      <div v-else-if="!videos.length" class="text-center py-8">No videos found.</div>
+      <div v-else class="grid gap-4">
+        <div v-if="currentPath.length" class="p-4 bg-gray-800 rounded-lg hover:bg-gray-700 cursor-pointer" @click="navigate('..')">
+          <span>&larr; Back</span>
+        </div>
+        <div v-for="v in folders" :key="v.path" class="p-4 bg-gray-800 rounded-lg hover:bg-gray-700 cursor-pointer" @click="navigate(v.name)">
+          📁 {{ v.name }}<br><small>{{ formatDate(v.lastModified) }}</small>
+        </div>
+        <div v-for="v in files" :key="v.path" class="p-4 bg-gray-800 rounded-lg hover:bg-gray-700 cursor-pointer" :class="{ 'ring-2 ring-blue-500': selectedVideos.has(v.path) }" @click="toggleSelect(v)" @dblclick="emitSelect(v)">
+          🎬 {{ v.name }}<br><small>{{ formatSize(v.size) }} • {{ formatDate(v.lastModified) }}</small>
+        </div>
+      </div>
+      <div v-if="videos.length" class="fixed bottom-0 left-0 right-0 p-4 bg-gray-900 border-t border-gray-800 flex justify-center items-center gap-4">
+        <small class="text-gray-400">{{ selectedCount ? selectedCount + ' selected' : 'No selection' }}</small>
+        <button class="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700" @click="playSelected" :disabled="!selectedCount">Play Selected</button>
+        <small class="text-gray-400">Enter=Play • Ctrl+A=Select All</small>
+      </div>
+    </div>`,
+  data() {
+    return {
+      videos: [],
+      selectedVideos: new Set(),
+      currentPath: [],
+      isLoading: true,
+      error: null
+    };
+  },
+  computed: {
+    folders() {
+      return this.videos.filter(v => v.isDirectory);
+    },
+    files() {
+      return this.videos.filter(v => !v.isDirectory);
+    },
+    selectedCount() {
+      return this.selectedVideos.size;
+    }
+  },
+  methods: {
+    async loadVideos(path = '') {
+      this.isLoading = true;
+      this.error = null;
+      try {
+        const res = await fetch(`/api/videos?path=${encodeURIComponent(path)}`);
+        const data = await res.json();
+        this.videos = data.videos.sort((a,b) => a.isDirectory === b.isDirectory ? a.name.localeCompare(b.name) : b.isDirectory ? 1 : -1);
+      } catch (e) {
+        this.error = e.message || 'Failed to load';
+      } finally {
+        this.isLoading = false;
+      }
+    },
+    formatSize(bytes) {
+      if (!bytes) return '0 B';
+      const units = ['B', 'KB', 'MB', 'GB'];
+      let i = 0;
+      while (bytes >= 1024 && i < units.length - 1) {
+        bytes /= 1024;
+        i++;
+      }
+      return `${bytes.toFixed(1)} ${units[i]}`;
+    },
+    formatDate(timestamp) {
+      if (!timestamp) return '';
+      return new Date(timestamp).toLocaleString();
+    },
+    navigate(name) {
+      if (name === '..') {
+        this.currentPath.pop();
+      } else {
+        this.currentPath.push(name);
+      }
+      this.loadVideos(this.currentPath.join('/'));
+    },
+    toggleSelect(video) {
+      if (this.selectedVideos.has(video.path)) {
+        this.selectedVideos.delete(video.path);
+      } else {
+        this.selectedVideos.add(video.path);
+      }
+    },
+    selectAll() {
+      this.selectedVideos = new Set(this.files.map(f => f.path));
+    },
+    clearSelection() {
+      this.selectedVideos.clear();
+    },
+    playSelected() {
+      const selected = this.files.filter(f => this.selectedVideos.has(f.path));
+      if (!selected.length) return;
+      
+      if (selected.length === 1) {
+        // Emit the full video object with URL
+        this.$emit('select', {
+          ...selected[0],
+          url: `/videos${selected[0].path.startsWith('/') ? '' : '/'}${selected[0].path}`
+        });
+      } else {
+        // Emit a playlist of videos
+        this.$emit('playlist', selected.map(video => ({
+          ...video,
+          url: `/videos${video.path.startsWith('/') ? '' : '/'}${video.path}`
+        })));
+      }
+      this.clearSelection();
+    },
+    emitSelect(video) {
+      // Emit the full video object with URL
+      this.$emit('select', {
+        ...video,
+        url: `/videos${video.path.startsWith('/') ? '' : '/'}${video.path}`
+      });
+    },
+    handleKeyDown(e) {
+      if (e.key === 'Enter' && this.selectedCount) this.playSelected();
+      if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
+        e.preventDefault();
+        this.selectAll();
+      }
+    }
+  },
+  mounted() {
+    this.loadVideos();
+    window.addEventListener('keydown', this.handleKeyDown);
+  },
+  beforeDestroy() {
+    window.removeEventListener('keydown', this.handleKeyDown);
+  }
+});
+
+// Handle file uploads
+async function handleFileUpload(files, path = '') {
+  const formData = new FormData();
+  Array.from(files).forEach(file => {
+    formData.append('files', file);
+  });
+  
+  if (path) {
+    formData.append('path', path);
+  }
+  
+  try {
+    const response = await fetch('/api/upload', {
+      method: 'POST',
+      body: formData,
+      headers: {
+        'Accept': 'application/json'
+      }
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Upload failed: ${response.statusText}`);
+    }
+    
+    return await response.json();
+  } catch (error) {
+    console.error('Upload error:', error);
+    throw error;
+  }
+}
+
+// Handle video file loading
+function loadVideoFromFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    
+    reader.onload = (e) => {
+      const videoUrl = URL.createObjectURL(file);
+      resolve({
+        url: videoUrl,
+        name: file.name,
+        type: file.type,
+        size: file.size
+      });
+    };
+    
+    reader.onerror = (error) => {
+      reject(error);
+    };
+    
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+var Utils = {
         parseInputNum: function (num) {
             var value = parseFloat(num);
             return value ? value : 0.0;
@@ -348,6 +643,81 @@ function createApp() {
         `
     });
 
+    // Video List Component
+Vue.component('video-list', {
+  template: `
+    <div class="video-list">
+      <div class="flex justify-between items-center mb-4">
+        <h2 class="text-xl font-semibold">Video Library</h2>
+        <button @click="$emit('close')" class="text-gray-400 hover:text-white">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+      
+      <!-- Video list will be populated here -->
+      <div v-if="isLoading" class="text-center py-8">
+        <div class="inline-block animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500"></div>
+        <p class="mt-2 text-gray-400">Loading videos...</p>
+      </div>
+      <div v-else-if="error" class="bg-red-900 bg-opacity-50 border border-red-700 text-red-200 p-4 rounded-lg mb-4">
+        {{ error }}
+      </div>
+      <div v-else class="space-y-2 max-h-[70vh] overflow-y-auto pr-2">
+        <div v-for="item in items" :key="item.path" 
+             class="flex items-center p-2 hover:bg-gray-800 rounded-lg cursor-pointer"
+             @click="selectVideo(item)">
+          <span v-if="item.isDirectory" class="text-yellow-400 mr-2">📁</span>
+          <span v-else class="text-blue-400 mr-2">▶️</span>
+          <span class="flex-1 truncate">{{ item.name }}</span>
+        </div>
+        <div v-if="items.length === 0" class="text-center py-8 text-gray-500">
+          No videos found.
+        </div>
+      </div>
+    </div>
+  `,
+  data() {
+    return {
+      items: [],
+      isLoading: false,
+      error: null
+    };
+  },
+  mounted() {
+    this.loadVideos();
+  },
+  methods: {
+    async loadVideos() {
+      this.isLoading = true;
+      this.error = null;
+      
+      try {
+        const response = await fetch('/api/videos');
+        if (!response.ok) {
+          throw new Error('Failed to load videos');
+        }
+        this.items = await response.json();
+      } catch (err) {
+        console.error('Error loading videos:', err);
+        this.error = 'Failed to load videos. Please try again.';
+      } finally {
+        this.isLoading = false;
+      }
+    },
+    
+    selectVideo(video) {
+      this.$emit('select', {
+        ...video,
+        url: `/videos/${video.path}`
+      });
+    }
+  }
+});
+
+// Main Vue instance
+function createApp() {
     var vm = new Vue({
         el: "#app",
         data: {
@@ -413,6 +783,39 @@ function createApp() {
             }
         },
         computed: {
+            onVideoSelected(video) {
+                if (!video || !video.url) {
+                  console.error('Invalid video object:', video);
+                  return;
+                }
+                
+                console.log('Video selected:', video);
+                this.showVideoList = false;
+                this.videoUrl = video.url;
+                this.currentVideo = video;
+                
+                var self = this;
+                this.$nextTick(function() {
+                  var videoEl = self.getVideoElement();
+                  if (videoEl) {
+                    if (videoEl.src !== self.videoUrl) {
+                      videoEl.src = self.videoUrl;
+                    }
+                    videoEl.load();
+                    videoEl.play().catch(function(e) { 
+                      console.error('Video play error:', e);
+                      videoEl.controls = true; // Show controls if autoplay fails
+                    });
+                  }
+                });
+              },
+              onPlaylistReceived(playlist) {
+                if (playlist && playlist.length > 0) {
+                  this.videoPlaylist = playlist;
+                  this.currentPlaylistIndex = 0;
+                  this.onVideoSelected(playlist[0]);
+                }
+              },
             dropWrapperClass: function () {
                 return this.isDraggingFile ? "dragging-file" : "";
             },
@@ -1716,11 +2119,30 @@ function createApp() {
                 return new Date(seconds * 1000).toISOString().substr(11, 8).replace(/^00:/g, '');
             },
 
+            // Video list state
+            showVideoList: true,
+            videoUrl: null,
+            videoPlaylist: [],
+            currentPlaylistIndex: -1,
+            
+            displayAsVideoTime: function(seconds) {
+                return new Date(seconds * 1000).toISOString().substr(11, 8).replace(/^00:/g, '');
+            }
+            },
+
             selectCaption: function (caption, offset) {
-                var previousTextSelection = this.textSelection;
-                this.textSelection = window.getSelection().toString();
-                if (this.textSelection.length > 0 && this.textSelection !== previousTextSelection)
+                var previousTextSelection = this.textSelection || '';
+                try {
+                    var selection = window.getSelection();
+                    this.textSelection = selection && selection.rangeCount > 0 ? selection.toString() : '';
+                } catch (e) {
+                    console.warn('Error getting text selection:', e);
+                    this.textSelection = '';
+                }
+                
+                if (this.textSelection && this.textSelection.length > 0 && this.textSelection !== previousTextSelection) {
                     return;
+                }
 
                 if (this.isOffsetMode) {
                     this.subtitlesOffsetInput = (this.subtitlesOffsetSeconds + offset).toFixed(2);
@@ -2543,8 +2965,8 @@ function createApp() {
                 document.body.removeChild(a);
                 setTimeout(function () { URL.revokeObjectURL(a.href); }, 1500);
             }
-        },
-    });
+        }
+    );
+    
+    return vm;
 }
-console.log("Creating app Date: " + new Date().toISOString().replace('T', ' ').replace('Z', ''));
-createApp();

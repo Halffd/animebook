@@ -524,8 +524,212 @@
       overflow: hidden;
     }
 
+    /* Video List Styles */
+    .video-list-view {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: var(--bw-000);
+      z-index: 1000;
+      overflow-y: auto;
+      padding: 20px;
+    }
+
+    .video-list-container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+
+    .video-list {
+      color: white;
+      font-family: Arial, sans-serif;
+    }
+
+    .video-list .flex {
+      display: flex;
+    }
+
+    .video-list .justify-between {
+      justify-content: space-between;
+    }
+
+    .video-list .items-center {
+      align-items: center;
+    }
+
+    .video-list .gap-2 {
+      gap: 0.5rem;
+    }
+
+    .video-list .mb-4 {
+      margin-bottom: 1rem;
+    }
+
+    .video-list .p-4 {
+      padding: 1rem;
+    }
+
+    .video-list .bg-gray-800 {
+      background-color: #1f2937;
+    }
+
+    .video-list .hover\:bg-gray-700:hover {
+      background-color: #374151;
+    }
+
+    .video-list .rounded-lg {
+      border-radius: 0.5rem;
+    }
+
+    .video-list .cursor-pointer {
+      cursor: pointer;
+    }
+
+    .video-list .ring-2 {
+      --tw-ring-offset-shadow: var(--tw-ring-inset) 0 0 0 var(--tw-ring-offset-width) var(--tw-ring-offset-color);
+      --tw-ring-shadow: var(--tw-ring-inset) 0 0 0 calc(2px + var(--tw-ring-offset-width)) var(--tw-ring-color);
+      box-shadow: var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow, 0 0 #0000);
+    }
+
+    .video-list .ring-blue-500 {
+      --tw-ring-opacity: 1;
+      --tw-ring-color: rgb(59 130 246 / var(--tw-ring-opacity));
+    }
+
+    .video-list .fixed {
+      position: fixed;
+    }
+
+    .video-list .bottom-0 {
+      bottom: 0;
+    }
+
+    .video-list .left-0 {
+      left: 0;
+    }
+
+    .video-list .right-0 {
+      right: 0;
+    }
+
+    .video-list .bg-gray-900 {
+      background-color: #111827;
+    }
+
+    .video-list .border-t {
+      border-top-width: 1px;
+    }
+
+    .video-list .border-gray-800 {
+      border-color: #1f2937;
+    }
+
+    .video-list .justify-center {
+      justify-content: center;
+    }
+
+    .video-list .gap-4 {
+      gap: 1rem;
+    }
+
+    .video-list .px-6 {
+      padding-left: 1.5rem;
+      padding-right: 1.5rem;
+    }
+
+    .video-list .py-2 {
+      padding-top: 0.5rem;
+      padding-bottom: 0.5rem;
+    }
+
+    .video-list .bg-green-600 {
+      background-color: #059669;
+    }
+
+    .video-list .hover\:bg-green-700:hover {
+      background-color: #047857;
+    }
+
+    .video-list .rounded-lg {
+      border-radius: 0.5rem;
+    }
+
+    .video-list .text-white {
+      color: white;
+    }
+
+    .video-list .text-gray-400 {
+      color: #9ca3af;
+    }
+
+    .video-list .text-sm {
+      font-size: 0.875rem;
+      line-height: 1.25rem;
+    }
+
+    .video-list .text-red-500 {
+      color: #ef4444;
+    }
+
+    .video-list .py-8 {
+      padding-top: 2rem;
+      padding-bottom: 2rem;
+    }
+
+    .video-list .text-center {
+      text-align: center;
+    }
+
+    .video-list .grid {
+      display: grid;
+    }
+
+    .video-list .gap-4 {
+      gap: 1rem;
+    }
+
+    .video-list .px-3 {
+      padding-left: 0.75rem;
+      padding-right: 0.75rem;
+    }
+
+    .video-list .py-1 {
+      padding-top: 0.25rem;
+      padding-bottom: 0.25rem;
+    }
+
+    .video-list .bg-blue-600 {
+      background-color: #2563eb;
+    }
+
+    .video-list .hover\:bg-blue-700:hover {
+      background-color: #1d4ed8;
+    }
+
+    .video-list .bg-red-600 {
+      background-color: #dc2626;
+    }
+
+    .video-list .hover\:bg-red-700:hover {
+      background-color: #b91c1c;
+    }
+
+    .video-list .disabled\:opacity-50:disabled {
+      opacity: 0.5;
+    }
+
+    .video-list .disabled\:cursor-not-allowed:disabled {
+      cursor: not-allowed;
+    }
+
     .unselectable,
     label {
+      -webkit-appearance: none;
+      -moz-appearance: none;
+      appearance: none;
       -webkit-user-select: none;
       -moz-user-select: none;
       -ms-user-select: none;
@@ -715,7 +919,9 @@
     }
 
     input[type=number] {
+      -webkit-appearance: textfield;
       -moz-appearance: textfield;
+      appearance: textfield;
     }
 
     input[type=number]::-webkit-inner-spin-button,
@@ -863,8 +1069,22 @@
 
 <body>
   <div id="app" @mousedown="onMouseDown" @mouseup="onMouseUp" @mousemove="onMouseMove" @mouseout="onMouseOut">
-    <div id="animebook-drop-wrapper" class="drop-wrapper" :class="dropWrapperClass"
-      @dragover.stop.prevent="onFileDragover" @dragleave.stop.prevent="onFileDragleave" @drop.stop.prevent="onFileDrop">
+    <!-- Video List View -->
+    <!-- Video List View -->
+    <div v-if="showVideoList" class="video-list-view">
+      <div class="video-list-container">
+        <video-list 
+          ref="videoList"
+          @select="onVideoSelected"
+          @playlist="onPlaylistReceived"
+        ></video-list>
+      </div>
+    </div>
+    <!-- Main App View -->
+    <div v-else id="animebook-drop-wrapper" class="drop-wrapper" :class="dropWrapperClass"
+      @dragover.prevent="onFileDragover"
+      @dragleave="onFileDragleave"
+      @drop.prevent="handleFileDrop">
       <div class="app-container" :style="calcAppStyle()" v-cloak>
         <input id="ab-file-browse-input" @change="onFileInputChange" type="file"
           accept=".srt,.ass,.vtt,.mp3,.m4a,.aac,.flac,.ogg,.wav,.opus,.mkv,.mp4,.avi" multiple hidden />
@@ -917,12 +1137,36 @@
         </div>
         <div :class="notifyTextClass" v-if="notifyText" v-html="notifyText"></div>
         <div class="video-wrapper" :class="videoContainerClass" v-show="videoUrl && !shouldShowVideoError">
-          <video id="ab-video-element" class="video-element" :style="videoStyle" :src="videoUrl" @error="onVideoError"
-            @timeupdate="onTimeUpdate" crossorigin="anonymous" :controls="savedSettings.showVideoControls"
-            disablePictureInPicture disabled tabIndex="-1" @focus="onVideoFocus" @click="onVideoClick"
-            @seeked="onVideoSeek" @loadeddata="onVideoLoad" :key="videoKey">
+          <video 
+            id="ab-video-element" 
+            class="video-element" 
+            :style="videoStyle" 
+            :src="videoUrl" 
+            @error="onVideoError"
+            @timeupdate="onTimeUpdate" 
+            crossorigin="anonymous" 
+            :controls="savedSettings.showVideoControls"
+            disablePictureInPicture 
+            tabIndex="-1" 
+            @focus="onVideoFocus" 
+            @click="onVideoClick"
+            @seeked="onVideoSeek" 
+            @loadeddata="onVideoLoad" 
+            @play="onVideoPlay"
+            @pause="onVideoPause"
+            @waiting="onVideoWaiting"
+            @playing="onVideoPlaying"
+            preload="auto"
+            playsinline
+            webkit-playsinline
+            x5-playsinline
+            x5-video-player-type="h5"
+            x5-video-player-fullscreen="true"
+            x5-video-orientation="landscape"
+            :key="videoKey">
             <track v-if="captionsUrl" :key="trackKey" kind="subtitles" :src="captionsUrl" @load="onCaptionsLoad"
               @cuechange="onCaptionsCueChange" default />
+            <p>Your browser doesn't support HTML5 video. Here is a <a :href="videoUrl">link to the video</a> instead.</p>
           </video>
 
           <span class="current-caption"
@@ -1207,14 +1451,12 @@
     </div>
     <form id="novalidatedform" novalidate />
   </div>
+  </div>
+  <!-- Load Vue 2.6.14 -->
+  <script src="https://cdn.jsdelivr.net/npm/vue@2.6.14/dist/vue.min.js"></script>
+  <!-- Load your scripts in order -->
+  <script src="js/aGlobal.js"></script>
+  <script src="js/videoList.js"></script>
+  <script src="js/index.js"></script>
 </body>
-<script src="js/vue.js"></script>
-<script src="js/kuromoji.js"></script>
-<script src="js/wanakana.min.js"></script>
-<script src="js/init.js"></script>
-<script src="js/aGlobal.js"></script>
-<script src="js/index.js"></script>
-<!-- <script src="js/videoList.js"></script> -->
-<!-- For dev, uncomment the above script and comment out the script below. -->
-
 </html>
