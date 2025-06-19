@@ -117,10 +117,6 @@
       color: var(--main-fg-color);
       background-color: var(--main-bg-color);
     }
-    body > div {
-    width: 100%;
-    height: 100%;
-    }
 
     .drop-wrapper {
       transition: background-color 100ms ease-out;
@@ -173,9 +169,11 @@
     }
 
     .video-element {
-      height: min-content;
+      max-width: 100%;
       max-height: 100%;
       width: 100%;
+      height: 100%;
+      object-fit: contain;
     }
 
     .sidebar {
@@ -1033,11 +1031,12 @@
     }
 
     .current-caption {
-  position: absolute;
-  width: 100%;
-  text-align: center;
-  color: white;
-  text-shadow: 
+      font-size: 50px;
+      position: absolute;
+      width: 100%;
+      text-align: center;
+      color: white;
+      text-shadow: 
     -1px -1px 0 black, 1px -1px 0 black, -1px 1px 0 black, 1px 1px 0 black,
     -2px -2px 0 black, 2px -2px 0 black, -2px 2px 0 black, 2px 2px 0 black,
     -3px -3px 0 black, 3px -3px 0 black, -3px 3px 0 black, 3px 3px 0 black,
@@ -1064,7 +1063,10 @@
 .video-wrapper {
   position: relative;
   width: 100%;
-  height: 100%;
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
   </style>

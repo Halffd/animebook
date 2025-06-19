@@ -785,7 +785,6 @@ function createApp() {
           </video>
 
           <span class="current-caption"
-            :style="'font-size: calc(' + (3.5 * savedSettings.subtitleFontSize) + 'vmin + 1.50rem);'"
             :key="shownCaptionsKey" lang="ja" v-html="displayedHtml"></span>
         </div>
 
