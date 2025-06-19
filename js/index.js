@@ -679,8 +679,10 @@ Vue.component('video-list', {
           },
           emitSelect(v) {
             this.onVideoSelected(v);
-          },
-          handleKeyDown(e) {
+          }
+        },
+
+        handleKeyDown(e) {
             if (e.key === 'Enter' && this.selectedCount && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
               e.preventDefault();
               e.stopPropagation();
@@ -690,17 +692,11 @@ Vue.component('video-list', {
               e.stopPropagation();
               this.selectAll();
             }
-          }
-        },
+          },
         mounted() {
           console.log('mounted videoList');
           this.loadVideos();
-          window.addEventListener('keydown', this.handleKeyDown);
-        },
-        beforeDestroy() {
-          console.log('beforeDestroy videoList');
-          window.removeEventListener('keydown', this.handleKeyDown);
-    }
+        }
 });
 
 // Main Vue instance
@@ -1351,6 +1347,14 @@ function createApp() {
                 window.addEventListener('keydown', function (e) {
                     if (/textarea|select/i.test(event.target.nodeName) || event.target.type === "text")
                         return;
+                    // Handle video list keys
+                    if (self.showVideoList) {
+                        // Call the component method directly
+                        if (self.$refs.videoList && self.$refs.videoList.handleKeyDown) {
+                            self.$refs.videoList.handleKeyDown(e);
+                        }
+                        return;
+                    }
                     let videoNG = !self.videoUrl || self.shouldShowVideoError;
                     let sidebarNG = !self.captionsUrl || self.shouldShowSubtitlesError;
                     let eitherNG = videoNG || sidebarNG;
