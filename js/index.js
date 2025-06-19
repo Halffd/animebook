@@ -717,7 +717,7 @@ function createApp() {
   
   <div v-show="!showVideoList">
     <div id="animebook-drop-wrapper" class="drop-wrapper" :class="dropWrapperClass"
-      @dragover.prevent="onFileDragover" @dragleave="onFileDragleave" @drop.prevent="handleFileDrop">
+      @dragover.prevent="onFileDragover" @dragleave="onFileDragleave" @drop.prevent="onFileDrop">
       <div class="app-container" :style="calcAppStyle()" v-cloak>
         <input id="ab-file-browse-input" @change="onFileInputChange" type="file"
           accept=".srt,.ass,.vtt,.mp3,.m4a,.aac,.flac,.ogg,.wav,.opus,.mkv,.mp4,.avi" multiple hidden />
@@ -1487,6 +1487,7 @@ function createApp() {
                                 return;
                             if (e.ctrlKey || e.altKey || e.metaKey)
                                 return;
+                            debugger;
                             stopEvent(e);
                             self.toggleSidebar();
                             break;
