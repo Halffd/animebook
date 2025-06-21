@@ -924,7 +924,9 @@ function createApp() {
                     { regex: '\\(\\(.*?\\)\\)', replaceText: '' },
                     { regex: '\\(.*?\\)', replaceText: '' },
                     { regex: '（.*?）', replaceText: '' }
-                ]
+                ],
+                textShadowSize: 5,
+                fontWeight: 500
             }
         },
         computed: {
@@ -1121,7 +1123,6 @@ function createApp() {
                     return "";
                 
                 var processedLines = [];
-                var hasSubtitle1 = false;
                 
                 for (var i = 0; i < this.displayedLines.length; i++) {
                     var line = this.displayedLines[i];
@@ -1132,8 +1133,7 @@ function createApp() {
                     if (!line.trim()) continue;
                     
                     // First non-empty line is subtitle-1, others are subtitle-2
-                    var lineClass = hasSubtitle1 ? 'subtitle-2' : 'subtitle-1';
-                    if (!hasSubtitle1) hasSubtitle1 = true;
+                    var lineClass = isJapanese(line) ? 'subtitle-1' : 'subtitle-2';
                     
                     var fontSize = lineClass === 'subtitle-1' ? 
                         this.savedSettings.subtitle1FontSize : 
@@ -1630,7 +1630,33 @@ function createApp() {
             },
 
             calcAppStyle: function () {
-                return this.calcGridTemplateAreas() + this.calcGridTemplateColumns(); // + this.calcGridTemplateRows();
+                return this.calcGridTemplateAreas() + this.calcGridTemplateColumns() + this.calcTextShadowStyle() + this.calcFontWeightStyle();
+            },
+            
+            calcTextShadowStyle: function() {
+                const size = this.savedSettings.textShadowSize || 3;
+                let shadows = [];
+                
+                // Generate multiple layers of shadow for better visibility
+                for (let i = 1; i <= size; i++) {
+                    // Add shadows in all directions
+                    shadows.push(`${-i}px ${-i}px 0 black`);
+                    shadows.push(`${i}px ${-i}px 0 black`);
+                    shadows.push(`${-i}px ${i}px 0 black`);
+                    shadows.push(`${i}px ${i}px 0 black`);
+                    // Add cardinal directions
+                    shadows.push(`${-i}px 0 0 black`);
+                    shadows.push(`${i}px 0 0 black`);
+                    shadows.push(`0 ${-i}px 0 black`);
+                    shadows.push(`0 ${i}px 0 black`);
+                }
+                
+                return `--text-shadow: ${shadows.join(', ')};`;
+            },
+            
+            calcFontWeightStyle: function() {
+                const weight = this.savedSettings.fontWeight || 400;
+                return `--font-weight: ${weight};`;
             },
 
             calcGridTemplateAreas: function () {
