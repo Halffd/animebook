@@ -920,6 +920,9 @@ function createApp() {
                 showVideoControls: true,
                 subtitle1FontSize: 1.0,
                 subtitle2FontSize: 1.0,
+                subtitleDelay: 0.0, // in seconds
+                showSubtitle1: true,
+                showSubtitle2: true,
                 regexReplacements: [
                     { regex: '\\(\\(.*?\\)\\)', replaceText: '' },
                     { regex: '\\(.*?\\)', replaceText: '' },
@@ -1123,6 +1126,7 @@ function createApp() {
                     return "";
                 
                 var processedLines = [];
+                var hasSubtitle1 = false;
                 
                 for (var i = 0; i < this.displayedLines.length; i++) {
                     var line = this.displayedLines[i];
@@ -1132,14 +1136,30 @@ function createApp() {
                     line = this.cleanSubtitleText(line);
                     if (!line.trim()) continue;
                     
-                    // First non-empty line is subtitle-1, others are subtitle-2
-                    var lineClass = isJapanese(line) ? 'subtitle-1' : 'subtitle-2';
+                    // Determine if this should be subtitle-1 or subtitle-2
+                    var isJapaneseLine = isJapanese(line);
+                    var isSubtitle1 = isJapaneseLine && !hasSubtitle1;
+                    var lineClass = isSubtitle1 ? 'subtitle-1' : 'subtitle-2';
                     
-                    var fontSize = lineClass === 'subtitle-1' ? 
+                    // Skip if this line type is hidden
+                    if ((isSubtitle1 && !this.savedSettings.showSubtitle1) || 
+                        (!isSubtitle1 && !this.savedSettings.showSubtitle2)) {
+                        continue;
+                    }
+                    
+                    if (isSubtitle1) hasSubtitle1 = true;
+                    
+                    var fontSize = isSubtitle1 ? 
                         this.savedSettings.subtitle1FontSize : 
                         this.savedSettings.subtitle2FontSize;
+                    
+                    var displayStyle = `font-size: ${fontSize}em;`;
+                    if ((isSubtitle1 && !this.savedSettings.showSubtitle1) || 
+                        (!isSubtitle1 && !this.savedSettings.showSubtitle2)) {
+                        displayStyle += ' display: none;';
+                    }
                         
-                    processedLines.push(`<div class="${lineClass}" style="font-size: ${fontSize}em;">${line}</div>`);
+                    processedLines.push(`<div class="${lineClass}" style="${displayStyle}">${line}</div>`);
                 }
                 
                 return processedLines.join("");
@@ -1494,13 +1514,18 @@ function createApp() {
                             break;
                         case 'v':
                         case 'V':
-                            if (eitherNG)
-                                return;
-                            if (e.ctrlKey || e.altKey || e.metaKey)
-                                return;
+                            if (eitherNG) return;
+                            if (e.ctrlKey || e.altKey || e.metaKey) return;
                             stopEvent(e);
-                            self.shouldShowMainCaption = !self.shouldShowMainCaption;
-                            self.notify(self.shouldShowMainCaption ? "Subtitles shown" : "Subtitles hidden");
+                            if (e.shiftKey) {
+                                // Shift+V: Toggle subtitle-2 visibility
+                                self.savedSettings.showSubtitle2 = !self.savedSettings.showSubtitle2;
+                                self.notify(`Subtitle 2: ${self.savedSettings.showSubtitle2 ? 'Shown' : 'Hidden'}`);
+                            } else {
+                                // V: Toggle subtitle-1 visibility
+                                self.savedSettings.showSubtitle1 = !self.savedSettings.showSubtitle1;
+                                self.notify(`Subtitle 1: ${self.savedSettings.showSubtitle1 ? 'Shown' : 'Hidden'}`);
+                            }
                             break;
                         case 'y':
                             toggleControls();
@@ -1609,6 +1634,20 @@ function createApp() {
                             self.savedSettings.subtitle1FontSize = Math.min(self.savedSettings.subtitle1FontSize + 0.15, 3.0);
                             self.savedSettings.subtitle2FontSize = Math.min(self.savedSettings.subtitle2FontSize + 0.15, 3.0);
                             self.notify(`Font sizes increased: ${self.savedSettings.subtitle1FontSize.toFixed(1)}/${self.savedSettings.subtitle2FontSize.toFixed(1)}`);
+                            break;
+                        case 'z':
+                        case 'Z':
+                            if (eitherNG) return;
+                            stopEvent(e);
+                            self.savedSettings.subtitleDelay = Math.max(-10.0, self.savedSettings.subtitleDelay - 0.1);
+                            self.notify(`Subtitle delay: ${self.savedSettings.subtitleDelay.toFixed(1)}s`);
+                            break;
+                        case 'x':
+                        case 'X':
+                            if (eitherNG) return;
+                            stopEvent(e);
+                            self.savedSettings.subtitleDelay = Math.min(10.0, self.savedSettings.subtitleDelay + 0.1);
+                            self.notify(`Subtitle delay: ${self.savedSettings.subtitleDelay.toFixed(1)}s`);
                             break;
                         case 'm':
                         case 'M':
@@ -1942,7 +1981,9 @@ function createApp() {
             getCurrentTime: function () {
                 console.log('[DEBUG] getCurrentTime - called');
                 var videoElement = this.getVideoElement();
-                return videoElement ? videoElement.currentTime : 0;
+                if (!videoElement) return 0;
+                // Apply subtitle delay if set
+                return videoElement.currentTime + (this.savedSettings.subtitleDelay || 0);
             },
 
             getTotalDuration: function () {
@@ -1955,37 +1996,36 @@ function createApp() {
                 console.log('[DEBUG] setCurrentTime - time:', time, 'shouldPlay:', shouldPlay);
                 try {
                     var videoElement = this.getVideoElement();
-                    console.log('[DEBUG] setCurrentTime - videoElement:', videoElement ? 'exists' : 'null');
                     if (videoElement) {
-                        // Update our internal time tracker first
+                        // Remove subtitle delay when setting time
+                        var videoTime = time - (this.savedSettings.subtitleDelay || 0);
+                        // Update our internal time tracking
                         this.currentTime = time;
                         console.log('[DEBUG] setCurrentTime - Updated internal currentTime:', this.currentTime);
                         
-                        // Then update the video element's time
-                        videoElement.currentTime = time;
-                        console.log('[DEBUG] setCurrentTime - Set video currentTime to:', time);
+                        // Update the actual video element
+                        videoElement.currentTime = videoTime;
+                        console.log('[DEBUG] setCurrentTime - Set video currentTime to:', videoTime);
                         
-                        // Handle play/pause in a try-catch to prevent AbortError
-                        try {
-                            if (shouldPlay) {
-                                // Use Promise-based play() with error handling
-                                videoElement.play()
-                                    .catch(error => {
-                                        console.warn('Error during play after seeking:', error);
-                                        // If we get an AbortError, it's usually because we're seeking too rapidly
-                                        // We can safely ignore this as it's a normal part of seeking
-                                        if (error.name !== 'AbortError') {
-                                            console.error('Unexpected error during play:', error);
-                                        }
-                                    });
-                            } else {
-                                this.pause();
-                            }
-                        } catch (playError) {
-                            console.warn('Error during play/pause after seeking:', playError);
+                        // Handle play/pause
+                        if (shouldPlay) {
+                            videoElement.play().catch(error => {
+                                console.warn('Error during play after seeking:', error);
+                                // If we get an AbortError, it's usually because we're seeking too rapidly
+                                // We can safely ignore this as it's a normal part of seeking
+                                if (error.name !== 'AbortError') {
+                                    console.error('Unexpected error during play:', error);
+                                }
+                            });
+                        } else {
+                            videoElement.pause();
                         }
-                        
-                        this.lastPauseTime = time;
+                    }
+                } catch (error) {
+                    console.warn('Error during setCurrentTime:', error);
+                }
+                
+                this.lastPauseTime = time;
                         this.skipNextAutoPause = false;
                     }
                 } catch (error) {
