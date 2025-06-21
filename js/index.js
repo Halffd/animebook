@@ -1265,33 +1265,18 @@ function createApp() {
             cleanSubtitleText: function(text) {
                 if (!text) return '';
                 
-                // First, ensure proper ruby tag structure
-                text = text.replace(/([^<]*)<rt>(.*?)<\/rt>([^<]*)/g, (match, before, rt, after) => {
-                    // If we don't have a ruby tag, add it
-                    if (!before.includes('<ruby>')) {
-                        return `${before}<ruby>${before.trim()}<rt>${rt}</rt></ruby>${after}`;
-                    }
-                    return match; // Already has proper ruby tag
-                });
+                // Don't mess with ruby/rt tags at all - they're critical for Japanese
+                text = text.replace(/<(?!\/?(?:ruby|rt|rp))[^>]*>/g, '');
                 
-                // Remove any HTML tags except ruby/rt/rp
-                text = text.replace(/<(?!\/?ruby\b|\/?rt\b|\/?rp\b)[^>]+>/g, '');
-                
-                // Clean up HTML entities
-                text = text
+                // Only clean up basic HTML entities and whitespace
+                return text
                     .replace(/&gt;/g, '>')
                     .replace(/&lt;/g, '<')
                     .replace(/&amp;/g, '&')
                     .replace(/&quot;/g, '"')
-                    .replace(/&apos;/g, "'");
-                
-                // Clean up any remaining malformed tags or artifacts
-                text = text
-                    .replace(/<\/?(p|div|span)[^>]*>\s*/g, '') // Remove common HTML tags
-                    .replace(/\s+/g, ' ') // Normalize whitespace
+                    .replace(/&apos;/g, "'")
+                    .replace(/\s+/g, ' ')
                     .trim();
-                
-                return text;
             },
             onVideoLoad: function (e) {
                 var video = this.getVideoElement();
@@ -2884,12 +2869,7 @@ function createApp() {
                         
                         // Handle non-Japanese text
                         if (!isJapanese(kj)) {
-                            if (hasJapanese && hasNonJapanese) {
-                                // If we have mixed content, wrap non-Japanese in <p> tags
-                                processedText += `<p>${kj}</p>`;
-                            } else {
-                                processedText += kj;
-                            }
+                            processedText += kj;
                             continue;
                         }
                         
