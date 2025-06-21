@@ -405,9 +405,6 @@ var Utils = {
                     :class="{'active-source': sourceId === activeCaptionSource}"
                   ></caption-item>
                 </span>
-                
-                <!-- Source separator -->
-                <div class="source-separator" v-if="captionSources.length > 1 && sourceId !== captionSources[captionSources.length-1]" :key="'sep-'+sourceId"></div>
               </template>
             </div>
           </div>
@@ -784,8 +781,8 @@ function createApp() {
             <p>Your browser doesn't support HTML5 video. Here is a <a :href="videoUrl">link to the video</a> instead.</p>
           </video>
 
-          <span class="current-caption"
-            :key="shownCaptionsKey" lang="ja" v-html="displayedHtml"></span>
+          <div class="current-caption"
+            :key="shownCaptionsKey" lang="ja" v-html="displayedHtml"></div>
         </div>
 
         <button @click="toggleVideoList" class="back-button">Back to Videos</button>
@@ -921,7 +918,8 @@ function createApp() {
             savedSettings: {
                 videoAlignment: 'top',
                 showVideoControls: true,
-                subtitleFontSize: 1.0,
+                subtitle1FontSize: 1.0,
+                subtitle2FontSize: 1.0,
                 regexReplacements: [
                     { regex: '\\(\\(.*?\\)\\)', replaceText: '' },
                     { regex: '\\(.*?\\)', replaceText: '' },
@@ -1122,19 +1120,26 @@ function createApp() {
                 if (!this.displayedLines || this.displayedLines.length === 0)
                     return "";
                 
-                // Process lines that may already contain HTML elements (like source identifiers)
                 var processedLines = [];
+                var hasSubtitle1 = false;
                 
                 for (var i = 0; i < this.displayedLines.length; i++) {
                     var line = this.displayedLines[i];
+                    if (!line || !line.trim()) continue;
                     
-                    // If the line already contains HTML tags, don't wrap it in a paragraph
-                    if (line.indexOf('<') >= 0 && line.indexOf('>') >= 0) {
-                        processedLines.push(line);
-                    } else {
-                        // Otherwise wrap it in a paragraph
-                        processedLines.push(Utils.wrapInP(line));
-                    }
+                    // Clean up the line text
+                    line = this.cleanSubtitleText(line);
+                    if (!line.trim()) continue;
+                    
+                    // First non-empty line is subtitle-1, others are subtitle-2
+                    var lineClass = hasSubtitle1 ? 'subtitle-2' : 'subtitle-1';
+                    if (!hasSubtitle1) hasSubtitle1 = true;
+                    
+                    var fontSize = lineClass === 'subtitle-1' ? 
+                        this.savedSettings.subtitle1FontSize : 
+                        this.savedSettings.subtitle2FontSize;
+                        
+                    processedLines.push(`<div class="${lineClass}" style="font-size: ${fontSize}em;">${line}</div>`);
                 }
                 
                 return processedLines.join("");
@@ -1257,6 +1262,37 @@ function createApp() {
             }
         },
         methods: {
+            cleanSubtitleText: function(text) {
+                if (!text) return '';
+                
+                // First, ensure proper ruby tag structure
+                text = text.replace(/([^<]*)<rt>(.*?)<\/rt>([^<]*)/g, (match, before, rt, after) => {
+                    // If we don't have a ruby tag, add it
+                    if (!before.includes('<ruby>')) {
+                        return `${before}<ruby>${before.trim()}<rt>${rt}</rt></ruby>${after}`;
+                    }
+                    return match; // Already has proper ruby tag
+                });
+                
+                // Remove any HTML tags except ruby/rt/rp
+                text = text.replace(/<(?!\/?ruby\b|\/?rt\b|\/?rp\b)[^>]+>/g, '');
+                
+                // Clean up HTML entities
+                text = text
+                    .replace(/&gt;/g, '>')
+                    .replace(/&lt;/g, '<')
+                    .replace(/&amp;/g, '&')
+                    .replace(/&quot;/g, '"')
+                    .replace(/&apos;/g, "'");
+                
+                // Clean up any remaining malformed tags or artifacts
+                text = text
+                    .replace(/<\/?(p|div|span)[^>]*>\s*/g, '') // Remove common HTML tags
+                    .replace(/\s+/g, ' ') // Normalize whitespace
+                    .trim();
+                
+                return text;
+            },
             onVideoLoad: function (e) {
                 var video = this.getVideoElement();
                 if (!video.audioTracks || video.audioTracks.length === 0) {
@@ -1533,12 +1569,22 @@ function createApp() {
                             stopEvent(e);
                             self.seekXSeconds(-self.bigJumpSeconds);
                             break;
-                        case 'h':
-                        case 'H':
-                            if (sidebarNG) {
-                                self.shouldHideRegexMatches = false;
-                                return;
+                        case 'g':
+                        case 'G':
+                            if (eitherNG) return;
+                            stopEvent(e);
+                            if (e.shiftKey) {
+                                // Decrease subtitle 2 font size
+                                self.savedSettings.subtitle2FontSize = Math.max(0.5, self.savedSettings.subtitle2FontSize - 0.1);
+                                self.notify(`Subtitle 2 size: ${self.savedSettings.subtitle2FontSize.toFixed(1)}`);
+                            } else {
+                                // Decrease subtitle 1 font size
+                                self.savedSettings.subtitle1FontSize = Math.max(0.5, self.savedSettings.subtitle1FontSize - 0.1);
+                                self.notify(`Subtitle 1 size: ${self.savedSettings.subtitle1FontSize.toFixed(1)}`);
                             }
+                            break;
+                        case 'R':
+                            if (eitherNG) return;
                             if (e.ctrlKey || e.altKey || e.metaKey)
                                 return;
                             stopEvent(e);
@@ -1546,20 +1592,38 @@ function createApp() {
                             if (self.shouldHideRegexMatches) {
                                 self.notify("Parentheses hidden");
                             } else {
-                                self.notify("Parentheses shown")
+                                self.notify("Parentheses shown");
+                            }
+                            break;
+                        case 'h':
+                        case 'H':
+                            if (eitherNG) return;
+                            stopEvent(e);
+                            if (e.shiftKey) {
+                                // Increase subtitle 2 font size
+                                self.savedSettings.subtitle2FontSize = Math.min(3.0, self.savedSettings.subtitle2FontSize + 0.1);
+                                self.notify(`Subtitle 2 size: ${self.savedSettings.subtitle2FontSize.toFixed(1)}`);
+                            } else {
+                                // Increase subtitle 1 font size
+                                self.savedSettings.subtitle1FontSize = Math.min(3.0, self.savedSettings.subtitle1FontSize + 0.1);
+                                self.notify(`Subtitle 1 size: ${self.savedSettings.subtitle1FontSize.toFixed(1)}`);
                             }
                             break;
                         case '-':
                             if (eitherNG)
                                 return;
                             stopEvent(e);
-                            self.savedSettings.subtitleFontSize = Math.max(self.savedSettings.subtitleFontSize - 0.15, 0.1);
+                            self.savedSettings.subtitle1FontSize = Math.max(self.savedSettings.subtitle1FontSize - 0.15, 0.5);
+                            self.savedSettings.subtitle2FontSize = Math.max(self.savedSettings.subtitle2FontSize - 0.15, 0.5);
+                            self.notify(`Font sizes decreased: ${self.savedSettings.subtitle1FontSize.toFixed(1)}/${self.savedSettings.subtitle2FontSize.toFixed(1)}`);
                             break;
                         case '=':
                             if (eitherNG)
                                 return;
                             stopEvent(e);
-                            self.savedSettings.subtitleFontSize = Math.min(self.savedSettings.subtitleFontSize + 0.15, 3.0);
+                            self.savedSettings.subtitle1FontSize = Math.min(self.savedSettings.subtitle1FontSize + 0.15, 3.0);
+                            self.savedSettings.subtitle2FontSize = Math.min(self.savedSettings.subtitle2FontSize + 0.15, 3.0);
+                            self.notify(`Font sizes increased: ${self.savedSettings.subtitle1FontSize.toFixed(1)}/${self.savedSettings.subtitle2FontSize.toFixed(1)}`);
                             break;
                         case 'm':
                         case 'M':
@@ -2862,11 +2926,11 @@ function createApp() {
                         console.error('Error processing furigana:', e);
                         // Fallback: just add the original text
                         const text = typeof t === 'object' ? t[0] : t;
-                        if (isJapanese(text)) {
-                            processedText += text;
-                        } else {
-                            processedText += `<p>${text}</p>`;
-                        }
+                        //if (isJapanese(text)) {
+                        processedText += text;
+                        //} else {
+                        //    processedText += `<p>${text}</p>`;
+                        //}
                     }
                 }
                 
