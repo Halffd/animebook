@@ -931,7 +931,7 @@ function createApp() {
                     { regex: '\\(.*?\\)', replaceText: '' },
                     { regex: '（.*?）', replaceText: '' }
                 ],
-                textShadowSize: 5,
+                textShadowSize: 3,
                 fontWeight: 500
             },
             autoSaveInterval: null,
@@ -1081,61 +1081,59 @@ function createApp() {
             },
             displayedLines: function () {
                 if (!this.shownCaptions || !this.shouldShowMainCaption)
-                    return "";
+                    return [];
 
                 var lines = [];
                 var self = this;
+                var hasJapanese = false;
                 
-                // Group captions by source
-                var captionsBySource = {};
-                this.shownCaptions.forEach(function(caption) {
-                    // Make sure we have a valid caption
-                    if (!caption) return;
+                // Process captions in reverse order (newest first)
+                var sortedCaptions = this.shownCaptions.slice().sort(function(a, b) {
+                    // Sort by lane first
+                    var laneDiff = (a.lane || 0) - (b.lane || 0);
+                    if (laneDiff !== 0) return laneDiff;
                     
-                    // Get the source ID (use the active source if none is specified)
-                    var sourceId = caption.sourceId || self.activeCaptionSource;
-                    if (!sourceId) return;
-                    
-                    // Initialize the array for this source if needed
-                    if (!captionsBySource[sourceId]) {
-                        captionsBySource[sourceId] = [];
-                    }
-                    
-                    // Add the caption to its source group
-                    captionsBySource[sourceId].push(caption);
+                    // Then by source to maintain consistent ordering
+                    var aSource = a.sourceId || '';
+                    var bSource = b.sourceId || '';
+                    return aSource.localeCompare(bSource);
                 });
                 
-                // Process captions from each source
-                Object.keys(captionsBySource).forEach(function(sourceId) {
-                    var sourceCaptions = captionsBySource[sourceId];
-                    if (!sourceCaptions || sourceCaptions.length === 0) return;
+                // Process each caption
+                sortedCaptions.forEach(function(caption) {
+                    if (!caption || !caption.text) return;
                     
-                    // Sort by lane to ensure proper stacking order
-                    sourceCaptions.sort(self.compareByLane);
+                    var isJapaneseCaption = isJapanese(caption.text);
                     
-                    // Process captions from this source
-                    sourceCaptions.forEach(function(caption) {
-                        if (!caption || !caption.text) return;
-                        
-                        // Ensure we have enough lines for proper positioning
-                        var linesToAdd = caption.neededNewlines - lines.length;
-                        for (var i = 0; i < linesToAdd; i++) {
-                            lines.unshift("");
-                        }
-                        
-                        // Split the caption text into lines
-                        var captionLines = caption.text.split("\n");
-                        if (captionLines.length > 0) {
-                            // Add spacing for better readability
-                            captionLines[0] = "\n" + captionLines[0];
-                            captionLines[captionLines.length - 1] = captionLines[captionLines.length - 1] + "\n";
+                    // If we already have a Japanese caption, skip additional Japanese captions
+                    if (isJapaneseCaption && hasJapanese) {
+                        return;
+                    }
+                    
+                    // Split the caption text into lines
+                    var captionLines = caption.text.split("\n").filter(line => line.trim() !== '');
+                    
+                    if (captionLines.length > 0) {
+                        // Add spacing for better readability
+                        if (!lines.length) {
+                            lines.unshift(""); // Add empty line at the beginning if first caption
                         }
                         
                         // Add the caption lines to our display
-                        lines = captionLines.concat(lines);
-                    });
+                        lines = lines.concat(captionLines);
+                        lines.push(""); // Add empty line after caption
+                        
+                        // Mark if we've added a Japanese caption
+                        if (isJapaneseCaption) {
+                            hasJapanese = true;
+                        }
+                    }
                 });
-
+                
+                // Remove any leading/trailing empty lines
+                while (lines.length && !lines[0].trim()) lines.shift();
+                while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+                
                 return lines;
             },
             displayedHtml: function () {
@@ -1338,23 +1336,62 @@ function createApp() {
                 }
             },
             onVideoSelected(video) {
-                if (!video || !video.url) {
-                  console.error('Invalid video object:', video);
-                  return;
+                if (!video) {
+                    console.error('No video provided');
+                    return;
                 }
                 
                 console.log('Video selected:', video);
+                
+                // Save progress of current video before loading new one
+                if (this.videoUrl) {
+                    this.saveProgress();
+                }
+                
                 this.showVideoList = false;
-                this.videoUrl = video.url;
                 this.currentVideo = video;
                 this.shouldShowVideoError = false;
                 this.videoErrorMessage = null;
                 this.videoFileName = video.name;
-                var self = this;
-                this.$nextTick(function() {
-                    var videoEl = self.getVideoElement();
+                
+                // If we have a File object, create an object URL for it
+                if (video instanceof File) {
+                    if (this.videoUrl) {
+                        URL.revokeObjectURL(this.videoUrl);
+                    }
+                    this.videoUrl = URL.createObjectURL(video);
+                } else if (video.url) {
+                    // If we have a URL, use it directly
+                    this.videoUrl = video.url;
+                } else {
+                    console.error('Video object has no valid URL or File data:', video);
+                    this.shouldShowVideoError = true;
+                    this.videoErrorMessage = 'Invalid video source';
+                    return;
+                }
+                
+                // Load and play the video
+                this.$nextTick(() => {
+                    const videoEl = this.getVideoElement();
                     if (videoEl) {
-                        this.loadVideo(videoEl.src);
+                        videoEl.load();
+                        videoEl.play().then(() => {
+                            // Wait 5 seconds before restoring progress
+                            setTimeout(() => {
+                                console.log('Restoring saved position after delay');
+                                this.restoreProgress();
+                            }, 500);
+                        }).catch(error => {
+                            console.error('Error playing video:', error);
+                            this.shouldShowVideoError = true;
+                            this.videoErrorMessage = error.message;
+                            
+                            // Still try to restore position even if autoplay fails
+                            setTimeout(() => {
+                                console.log('Restoring saved position after autoplay error');
+                                this.restoreProgress();
+                            }, 500);
+                        });
                     }
                 });
             },
@@ -2516,6 +2553,7 @@ function createApp() {
             replayCaption: function () {
                 console.log('[DEBUG] replayCaption - called');
                 var currentCaption = null;
+                var video = this.getVideoElement();
                 
                 // Try to get the current caption from activeCaptions
                 if (this.activeCaptions && this.activeCaptions.length > 0) {
@@ -2525,7 +2563,7 @@ function createApp() {
                 
                 // If no active caption, try to find one at the current time
                 if (!currentCaption) {
-                    var currentTime = this.currentTime;
+                    var currentTime = video ? video.currentTime : this.currentTime;
                     var sourceCaptions = this.captions[this.activeCaptionSource];
                     if (sourceCaptions && sourceCaptions.length) {
                         // Find caption that includes current time
@@ -2537,17 +2575,43 @@ function createApp() {
                             }
                         }
                         
-                        // If still no caption, use the first one as fallback
+                        // If still no caption, find the next upcoming caption
                         if (!currentCaption) {
-                            console.log('[DEBUG] replayCaption - Falling back to first caption');
-                            currentCaption = sourceCaptions[0];
+                            console.log('[DEBUG] replayCaption - Finding next upcoming caption');
+                            for (var j = 0; j < sourceCaptions.length; j++) {
+                                if (sourceCaptions[j].startTime > currentTime) {
+                                    currentCaption = sourceCaptions[j];
+                                    break;
+                                }
+                            }
+                            
+                            // If no upcoming caption, use the last one
+                            if (!currentCaption) {
+                                console.log('[DEBUG] replayCaption - Falling back to last caption');
+                                currentCaption = sourceCaptions[sourceCaptions.length - 1];
+                            }
                         }
                     }
                 }
                 
                 console.log('[DEBUG] replayCaption - currentCaption:', currentCaption);
                 if (currentCaption) {
-                    this.playCaption(currentCaption);
+                    // Seek to the start of the caption
+                    if (video) {
+                        video.currentTime = currentCaption.startTime;
+                        console.log(`[DEBUG] replayCaption - Seeking to ${currentCaption.startTime}s`);
+                        
+                        // If video is paused, play it after seeking
+                        if (video.paused) {
+                            video.play().catch(error => {
+                                console.error('Error playing video:', error);
+                            });
+                        }
+                    }
+                    
+                    // Update active caption
+                    this.activeCaptionIds = [currentCaption.id];
+                    console.log('[DEBUG] replayCaption - Set activeCaptionIds to:', this.activeCaptionIds);
                 } else {
                     console.log('[DEBUG] replayCaption - No caption to replay');
                 }
