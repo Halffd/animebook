@@ -1,3 +1,4 @@
+
 var API_URL = 'http://127.0.0.1:5000'; // Replace with your API URL
 
 // Enable CORS for all routes
@@ -923,6 +924,7 @@ function createApp() {
                 subtitleDelay: 0.0, // in seconds
                 showSubtitle1: true,
                 showSubtitle2: true,
+                deletedCaptionIds: [], // Track deleted caption IDs
                 regexReplacements: [
                     { regex: '\\(\\(.*?\\)\\)', replaceText: '' },
                     { regex: '\\(.*?\\)', replaceText: '' },
@@ -1021,6 +1023,19 @@ function createApp() {
             },
             shownCaptions: function () {
                 if (!this.activeCaptions || !this.captions || !this.captionsMap || !this.isVoicedTime)
+                    return [];
+                    
+                // Filter out deleted captions
+                var activeCaptions = this.activeCaptions.filter(caption => 
+                    !this.savedSettings.deletedCaptionIds.includes(caption.id)
+                );
+                
+                // Filter out deleted captions
+                var activeCaptions = this.activeCaptions.filter(caption => 
+                    !this.savedSettings.deletedCaptionIds.includes(caption.id)
+                );
+                
+                if (!activeCaptions || activeCaptions.length === 0)
                     return [];
 
                 // Get active captions from the current source
@@ -1126,7 +1141,6 @@ function createApp() {
                     return "";
                 
                 var processedLines = [];
-                var hasSubtitle1 = false;
                 
                 for (var i = 0; i < this.displayedLines.length; i++) {
                     var line = this.displayedLines[i];
@@ -1138,7 +1152,7 @@ function createApp() {
                     
                     // Determine if this should be subtitle-1 or subtitle-2
                     var isJapaneseLine = isJapanese(line);
-                    var isSubtitle1 = isJapaneseLine && !hasSubtitle1;
+                    var isSubtitle1 = isJapaneseLine;
                     var lineClass = isSubtitle1 ? 'subtitle-1' : 'subtitle-2';
                     
                     // Skip if this line type is hidden
@@ -1146,18 +1160,12 @@ function createApp() {
                         (!isSubtitle1 && !this.savedSettings.showSubtitle2)) {
                         continue;
                     }
-                    
-                    if (isSubtitle1) hasSubtitle1 = true;
-                    
                     var fontSize = isSubtitle1 ? 
                         this.savedSettings.subtitle1FontSize : 
                         this.savedSettings.subtitle2FontSize;
                     
                     var displayStyle = `font-size: ${fontSize}em;`;
-                    if ((isSubtitle1 && !this.savedSettings.showSubtitle1) || 
-                        (!isSubtitle1 && !this.savedSettings.showSubtitle2)) {
-                        displayStyle += ' display: none;';
-                    }
+                    // Visibility is handled by v-if in the template
                         
                     processedLines.push(`<div class="${lineClass}" style="${displayStyle}">${line}</div>`);
                 }
@@ -1649,6 +1657,61 @@ function createApp() {
                             self.savedSettings.subtitleDelay = Math.min(10.0, self.savedSettings.subtitleDelay + 0.1);
                             self.notify(`Subtitle delay: ${self.savedSettings.subtitleDelay.toFixed(1)}s`);
                             break;
+                            
+                        case 'Delete':
+                            if (eitherNG) return;
+                            stopEvent(e);
+                            if (e.shiftKey) {
+                                // Shift+Delete: Delete all active captions
+                                if (!self.activeCaptions || self.activeCaptions.length === 0) {
+                                    self.notify("No active captions to delete");
+                                    break;
+                                }
+                                // Delete all active captions
+                                var idsToDelete = [];
+                                self.activeCaptions.forEach(function(caption) {
+                                    if (self.savedSettings.deletedCaptionIds.indexOf(caption.id) === -1) {
+                                        idsToDelete.push(caption.id);
+                                    }
+                                });
+                                
+                                if (idsToDelete.length > 0) {
+                                    self.savedSettings.deletedCaptionIds = self.savedSettings.deletedCaptionIds.concat(idsToDelete);
+                                    self.notify(`Deleted ${idsToDelete.length} captions`);
+                                    self.$forceUpdate();
+                                } else {
+                                    self.notify("No new captions to delete");
+                                }
+                            } else {
+                                // Delete: Delete only the first caption
+                                if (!self.activeCaptions || self.activeCaptions.length === 0) {
+                                    self.notify("No active captions to delete");
+                                    break;
+                                }
+                                var idToDelete = self.activeCaptions[0].id;
+                                // Add to deleted IDs if not already there
+                                if (self.savedSettings.deletedCaptionIds.indexOf(idToDelete) === -1) {
+                                    self.savedSettings.deletedCaptionIds.push(idToDelete);
+                                    self.notify("Deleted first caption");
+                                    self.$forceUpdate();
+                                } else {
+                                    self.notify("First caption already deleted");
+                                }
+                            }
+                            break;
+                        case 'u':
+                        case 'U':
+                            if (eitherNG) return;
+                            stopEvent(e);
+                            if (self.savedSettings.deletedCaptionIds.length > 0) {
+                                var restored = self.savedSettings.deletedCaptionIds.pop();
+                                self.notify(`Restored last deleted caption`);
+                                self.$forceUpdate();
+                            } else {
+                                self.notify("No deletions to undo");
+                            }
+                            break;
+                            
                         case 'm':
                         case 'M':
                             if (videoNG)
@@ -2026,11 +2089,7 @@ function createApp() {
                 }
                 
                 this.lastPauseTime = time;
-                        this.skipNextAutoPause = false;
-                    }
-                } catch (error) {
-                    console.error('Error in setCurrentTime:', error);
-                }
+                this.skipNextAutoPause = false;
             },
 
             copySubtitle: function () {
