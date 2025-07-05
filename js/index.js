@@ -925,6 +925,7 @@ function createApp() {
                 showSubtitle1: true,
                 showSubtitle2: true,
                 deletedCaptionIds: [], // Track deleted caption IDs
+                watchedHistory: {}, // Track watch progress by filename
                 regexReplacements: [
                     { regex: '\\(\\(.*?\\)\\)', replaceText: '' },
                     { regex: '\\(.*?\\)', replaceText: '' },
@@ -932,7 +933,8 @@ function createApp() {
                 ],
                 textShadowSize: 5,
                 fontWeight: 500
-            }
+            },
+            autoSaveInterval: null,
         },
         computed: {
             dropWrapperClass: function () {
@@ -1352,13 +1354,27 @@ function createApp() {
                 this.$nextTick(function() {
                     var videoEl = self.getVideoElement();
                     if (videoEl) {
-                        videoEl.src = self.videoUrl;  // Direct URL assignment
-                        videoEl.load();
-                        videoEl.play().catch(function(e) { 
-                            console.error('Video play error:', e);
-                            videoEl.controls = true;
-                        });
+                        this.loadVideo(videoEl.src);
                     }
+                });
+            },
+            loadVideo: function (url) {
+                // Save progress of current video before loading new one
+                if (this.videoUrl) {
+                    this.saveProgress();
+                }
+                
+                this.videoUrl = url;
+                this.$nextTick(function () {
+                    const video = this.getVideoElement();
+                    video.load();
+                    video.play().then(() => {
+                        // After video loads, try to restore its progress
+                        this.restoreProgress();
+                    }).catch(e => {
+                        console.error('Video play error:', e);
+                        video.controls = true;
+                    });
                 });
             },
             onPlaylistReceived(playlist) {
@@ -1387,6 +1403,193 @@ function createApp() {
                 for (k in this.savedSettings) {
                     if (settings.hasOwnProperty(k))
                         this.savedSettings[k] = settings[k];
+                }
+            },
+            loadSettings: function () {
+                var json = localStorage.getItem('animebook-settings');
+                if (!json)
+                    return;
+
+                var settings = JSON.parse(json);
+                if (!settings)
+                    return;
+
+                for (var k in this.savedSettings) {
+                    if (settings.hasOwnProperty(k))
+                        this.savedSettings[k] = settings[k];
+                }
+                
+                // Initialize watchedHistory if it doesn't exist
+                if (!this.savedSettings.watchedHistory) {
+                    this.savedSettings.watchedHistory = {};
+                }
+            },
+            
+            saveSettings: function() {
+                try {
+                    const settingsToSave = JSON.parse(JSON.stringify(this.savedSettings));
+                    localStorage.setItem('animebook-settings', JSON.stringify(settingsToSave));
+                    console.log('[DEBUG] saveSettings - Settings saved successfully');
+                } catch (error) {
+                    console.error('[ERROR] saveSettings - Failed to save settings:', error);
+                }
+            },
+            
+            saveProgress: function() {
+                console.log('[DEBUG] saveProgress - Attempting to save progress');
+                if (!this.videoUrl) {
+                    console.log('[DEBUG] saveProgress - No video URL');
+                    return;
+                }
+                
+                const filename = this.extractFilename(this.videoUrl);
+                if (!filename) {
+                    console.log('[DEBUG] saveProgress - Could not extract filename from URL:', this.videoUrl);
+                    return;
+                }
+                
+                const video = this.getVideoElement();
+                if (!video) {
+                    console.log('[DEBUG] saveProgress - No video element');
+                    return;
+                }
+                
+                // Only save if video has loaded and has a duration
+                if (isNaN(video.duration) || video.duration <= 0) {
+                    console.log('[DEBUG] saveProgress - Video not loaded or invalid duration');
+                    return;
+                }
+                
+                console.log('[DEBUG] saveProgress - Current time:', video.currentTime, 'Duration:', video.duration);
+                
+                // Initialize watchedHistory if it doesn't exist
+                if (!this.savedSettings.watchedHistory) {
+                    console.log('[DEBUG] saveProgress - Initializing watchedHistory');
+                    this.savedSettings.watchedHistory = {};
+                }
+                
+                // Create a backup of current settings
+                const prevSettings = JSON.parse(JSON.stringify(this.savedSettings));
+                
+                try {
+                    // Update the watched history
+                    const currentTime = video.currentTime;
+                    const progressData = {
+                        date: new Date().toISOString(),
+                        timestamp: currentTime,
+                        time: this.formatTimeHHMMSS(currentTime),
+                        duration: video.duration,
+                        durationFormatted: this.formatTimeHHMMSS(video.duration),
+                        filename: filename,
+                        deletedCaptionIds: [...(this.savedSettings.deletedCaptionIds || [])]
+                    };
+                    
+                    console.log('[DEBUG] saveProgress - Saving progress data:', progressData);
+                    this.savedSettings.watchedHistory[filename] = progressData;
+                    
+                    // Save to localStorage
+                    this.saveSettings();
+                    console.log('[DEBUG] saveProgress - Progress saved successfully for', filename);
+                } catch (error) {
+                    console.error('[ERROR] saveProgress - Failed to save progress:', error);
+                    // Restore previous settings on error
+                    this.savedSettings = prevSettings;
+                }
+            },
+            
+            restoreProgress: function() {
+                if (!this.videoUrl) return;
+                
+                const filename = this.extractFilename(this.videoUrl);
+                if (!filename || !this.savedSettings.watchedHistory[filename]) return;
+                
+                const progress = this.savedSettings.watchedHistory[filename];
+                const video = this.getVideoElement();
+                
+                // Only restore if video is long enough and position is valid
+                if (progress.duration > 0 && progress.timestamp > 0 && 
+                    progress.timestamp < progress.duration * 0.95) {
+                    
+                    // Set video time
+                    video.currentTime = progress.timestamp;
+                    
+                    // Restore deleted captions for this video
+                    this.savedSettings.deletedCaptionIds = [...(progress.deletedCaptionIds || [])];
+                    
+                    this.notify(`Resuming from ${this.formatTime(progress.timestamp, progress.timestamp >= 3600)}`);
+                }
+            },
+            
+            /**
+             * Format seconds into a time string (HH:MM:SS or MM:SS)
+             * @param {number} totalSeconds - Total seconds to format
+             * @param {boolean} [forceHours=false] - Always show hours even if zero
+             * @returns {string} Formatted time string
+             */
+            formatTime: function(totalSeconds, forceHours = false) {
+                // Handle invalid input
+                if (isNaN(totalSeconds) || !isFinite(totalSeconds)) {
+                    return forceHours ? '00:00:00' : '00:00';
+                }
+                
+                // Handle negative times
+                const isNegative = totalSeconds < 0;
+                let seconds = Math.abs(totalSeconds);
+                
+                // Calculate time components
+                const hours = Math.floor(seconds / 3600);
+                seconds %= 3600;
+                const minutes = Math.floor(seconds / 60);
+                seconds = Math.floor(seconds % 60);
+                
+                // Format components with leading zeros
+                const pad = num => num.toString().padStart(2, '0');
+                
+                // Build time parts
+                const parts = [];
+                
+                // Add hours if needed
+                if (forceHours || hours > 0) {
+                    parts.push(pad(hours));
+                }
+                
+                // Always add minutes and seconds
+                parts.push(pad(minutes));
+                parts.push(pad(seconds));
+                
+                // Join parts with colons
+                let result = parts.join(':');
+                
+                // Add negative sign if needed
+                if (isNegative) {
+                    result = '-' + result;
+                }
+                
+                return result;
+            },
+            
+            // Alias for backward compatibility
+            formatTimeHHMMSS: function(seconds) {
+                return this.formatTime(seconds, true);
+            },
+            
+            /**
+             * Extract filename from a URL, handling query parameters and paths
+             * @param {string} url - The URL to extract filename from
+             * @returns {string|null} The extracted filename or null if invalid
+             */
+            extractFilename: function(url) {
+                if (!url) return null;
+                try {
+                    // Handle both string URLs and URL objects
+                    const urlObj = new URL(url, window.location.href);
+                    const pathname = urlObj.pathname;
+                    // Get the last part of the path and remove any trailing slashes
+                    const filename = pathname.split('/').pop() || '';
+                    return filename || null;
+                } catch (e) {
+                    console.error('Error extracting filename from URL:', e);
+                    return null;
                 }
             },
 
@@ -2116,9 +2319,67 @@ function createApp() {
                 var video = this.getVideoElement();
                 if (video.paused) {
                     video.play();
+                    this.isPlaying = true;
+                    
+                    // Clear any existing interval
+                    if (this.autoSaveInterval) {
+                        clearInterval(this.autoSaveInterval);
+                    }
+                    
+                    // Set up auto-save every 2 seconds
+                    this.autoSaveInterval = setInterval(() => {
+                        this.saveProgress();
+                    }, 2000);
                 }
                 else {
                     this.pause();
+                }
+            },
+            
+            play: function() {
+                var video = this.getVideoElement();
+                if (video) {
+                    // Clear any existing interval
+                    if (this.autoSaveInterval) {
+                        clearInterval(this.autoSaveInterval);
+                    }
+                    
+                    // Start playback
+                    const playPromise = video.play();
+                    
+                    if (playPromise !== undefined) {
+                        playPromise.then(_ => {
+                            // Playback started successfully
+                            this.isPlaying = true;
+                            console.log('[DEBUG] play - Video playback started');
+                            
+                            // Set up auto-save every 2 seconds
+                            this.autoSaveInterval = setInterval(() => {
+                                console.log('[DEBUG] Auto-save interval triggered');
+                                this.saveProgress();
+                            }, 2000);
+                            
+                            // Initial save
+                            this.saveProgress();
+                        })
+                        .catch(error => {
+                            console.error('[ERROR] play - Playback failed:', error);
+                            video.controls = true; // Show controls if autoplay was prevented
+                        });
+                    } else {
+                        // For older browsers that don't return a promise
+                        this.isPlaying = true;
+                        console.log('[DEBUG] play - Video playback started (legacy)');
+                        
+                        // Set up auto-save every 2 seconds
+                        this.autoSaveInterval = setInterval(() => {
+                            console.log('[DEBUG] Auto-save interval triggered (legacy)');
+                            this.saveProgress();
+                        }, 2000);
+                        
+                        // Initial save
+                        this.saveProgress();
+                    }
                 }
             },
 
@@ -2539,21 +2800,6 @@ function createApp() {
                 this.audioTracks[audioTrackIndex].enabled = true;
             },
 
-            cycleAudioTrack: function () {
-                if (this.audioTracks === null || this.selectedAudioTrack === null) {
-                    if (this.getVideoElement().audioTracks === undefined)
-                        this.notify("No audio tracks exist. See ? for enabling audio tracks in your browser.");
-                    else
-                        this.notify("Could not find audio tracks in video")
-                    return;
-                }
-                this.selectedAudioTrack = (this.selectedAudioTrack + 1) % this.audioTracks.length;
-                var newTrack = this.audioTracks[this.selectedAudioTrack];
-                this.notify("Audio Track: " + (this.selectedAudioTrack + 1) + "/" + this.audioTracks.length +
-                    (newTrack.language ? " [" + newTrack.language + "]" : "") +
-                    (newTrack.label ? " " + newTrack.label : ""))
-            },
-
             addRegexReplacement: function () {
                 this.savedSettings.regexReplacements.push({ regex: "", replaceText: "" });
             },
@@ -2653,6 +2899,10 @@ function createApp() {
                     }
                     this.autoPauseCaptions = this.activeCaptions;
                     this.pause();
+                    // Set up auto-save every 2 seconds
+                    this.autoSaveInterval = setInterval(() => {
+                        this.saveProgress();
+                    }, 2000);
                 }
             },
 
@@ -2904,9 +3154,9 @@ function createApp() {
                 var lines = captions.map(function (caption) {
                     return [
                         caption.id,
-                        formatTime(caption.startTime) +
+                        formatTime(caption.startTime, true) +
                         " --> " +
-                        formatTime(caption.endTime),
+                        formatTime(caption.endTime, true),
                         (caption.voice ? "<v " + caption.voice + ">" : "") +
                         caption.text,
                     ].join("\n");
@@ -2937,9 +3187,9 @@ function createApp() {
                 var lines = captions.map(function (caption, index) {
                     return [
                         index + 1,
-                        formatTime(caption.startTime) +
+                        formatTime(caption.startTime, true) +
                         " --> " +
-                        formatTime(caption.endTime),
+                        formatTime(caption.endTime, true),
                         (caption.voice ? "(" + caption.voice + ") " : "") +
                         caption.text,
                     ].join("\n");
