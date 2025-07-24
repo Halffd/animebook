@@ -1082,60 +1082,39 @@ function createApp() {
             displayedLines: function () {
                 if (!this.shownCaptions || !this.shouldShowMainCaption)
                     return [];
-
-                var lines = [];
-                var self = this;
-                var hasJapanese = false;
-                
-                // Process captions in reverse order (newest first)
-                var sortedCaptions = this.shownCaptions.slice().sort(function(a, b) {
-                    // Sort by lane first
-                    var laneDiff = (a.lane || 0) - (b.lane || 0);
+            
+                let hasJapanese = false;
+            
+                // Sort captions by lane ascending, then by source
+                const sortedCaptions = this.shownCaptions.slice().sort((a, b) => {
+                    const laneDiff = (a.lane || 0) - (b.lane || 0);
                     if (laneDiff !== 0) return laneDiff;
-                    
-                    // Then by source to maintain consistent ordering
-                    var aSource = a.sourceId || '';
-                    var bSource = b.sourceId || '';
-                    return aSource.localeCompare(bSource);
+                    return (a.sourceId || '').localeCompare(b.sourceId || '');
                 });
-                
-                // Process each caption
-                sortedCaptions.forEach(function(caption) {
-                    if (!caption || !caption.text) return;
-                    
-                    var isJapaneseCaption = isJapanese(caption.text);
-                    
-                    // If we already have a Japanese caption, skip additional Japanese captions
-                    if (isJapaneseCaption && hasJapanese) {
-                        return;
+            
+                const lines = [];
+                for (const caption of sortedCaptions) {
+                    if (!caption?.text) continue;
+            
+                    const isJap = isJapanese(caption.text);
+                    if (isJap && hasJapanese) continue; // only one JP caption
+            
+                    // Split into non-empty lines
+                    const captionLines = caption.text.split("\n").filter(l => l.trim());
+                    if (captionLines.length === 0) continue;
+            
+                    // Add caption lines, newest at the bottom
+                    for (const line of captionLines) {
+                        lines.push(line);
                     }
-                    
-                    // Split the caption text into lines
-                    var captionLines = caption.text.split("\n").filter(line => line.trim() !== '');
-                    
-                    if (captionLines.length > 0) {
-                        // Add spacing for better readability
-                        if (!lines.length) {
-                            lines.unshift(""); // Add empty line at the beginning if first caption
-                        }
-                        
-                        // Add the caption lines to our display
-                        lines = lines.concat(captionLines);
-                        lines.push(""); // Add empty line after caption
-                        
-                        // Mark if we've added a Japanese caption
-                        if (isJapaneseCaption) {
-                            hasJapanese = true;
-                        }
-                    }
-                });
-                
-                // Remove any leading/trailing empty lines
-                while (lines.length && !lines[0].trim()) lines.shift();
-                while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
-                
+            
+                    // Mark JP added
+                    if (isJap) hasJapanese = true;
+                }
+            
                 return lines;
             },
+            
             displayedHtml: function () {
                 if (!this.displayedLines || this.displayedLines.length === 0)
                     return "";
