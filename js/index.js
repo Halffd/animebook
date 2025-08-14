@@ -933,8 +933,8 @@ function createApp() {
                     { regex: '\\(.*?\\)', replaceText: '' },
                     { regex: '（.*?）', replaceText: '' }
                 ],
-                textShadowSize: 3,
-                fontWeight: 500
+                textShadowSize: 2,
+                fontWeight: 400
             },
             autoSaveInterval: null,
         },
@@ -1013,12 +1013,15 @@ function createApp() {
                 var result = [];
             
                 // Small buffer to catch lines we might miss due to timing
-                var catchBuffer = 0.1; // Just enough to not miss lines
+                var maxBuffer = 1.5; // 1.5s
+                var bufferRate = 0.025; // 30 char = 0.75s
                 
                 var isActiveAtTime = function (caption) {
                     // Show if we're in the caption time OR just passed it recently
-                    return (caption.startTime <= time && time <= caption.endTime) ||
-                           (caption.endTime >= time - catchBuffer && caption.startTime <= time);
+                    //return (caption.startTime <= time && time <= caption.endTime) ||
+                    //       (caption.endTime >= time - catchBuffer && caption.startTime <= time);
+                    var smartBuffer = Math.min(maxBuffer, caption.text.length * bufferRate); // 20ms per char, max 300ms
+                    return (caption.startTime <= time && time <= caption.endTime + smartBuffer);
                 };
             
                 // For each source, only take the LATEST active caption
