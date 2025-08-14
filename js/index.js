@@ -1,4 +1,3 @@
-
 var API_URL = 'http://127.0.0.1:5000'; // Replace with your API URL
 
 // Enable CORS for all routes
@@ -798,16 +797,16 @@ function createApp() {
           <caption-bar @select-caption="selectCaption" @set-custom-offset="setCustomOffset"
             @switch-source="switchCaptionSource" :captions="captions" :custom-offsets="customOffsets"
             :is-auto-pause-mode="isAutoPauseMode" :is-offset-mode="isOffsetMode" :current-time="currentTime"
-            v-if="captionsUrl" :caption-sources="captionSources"
+            v-if="captionSources.length > 0" :caption-sources="captionSources"
             :active-caption-source="activeCaptionSource"></caption-bar>
             
-          <div v-if="captionsUrl && isOffsetMode" class="offset-hint unselectable">Select the subtitle that ends where
+          <div v-if="captionSources.length > 0 && isOffsetMode" class="offset-hint unselectable">Select the subtitle that ends where
             the video currently is: {{displayAsVideoTime(currentTime)}}</div>
             
           <div class="auto-pause-text unselectable" v-if="isAutoPauseMode">Auto Pause <span
               style="display: inline-block;">:</span><span v-html="autoPauseIcon"></span></div>
               
-          <div v-if="captionsUrl" class="controls">
+          <div v-if="captionSources.length > 0" class="controls">
             <a tabindex="4" :class="helpClass" @click="toggleHelp(); enableHelpMode('hotkeys')"><span>?</span></a>
             <a v-if="audioTracks && audioTracks.length > 1" tabindex="3" :class="audioTrackClass"
               @click="cycleAudioTrack()"><span>{{selectedAudioTrack + 1}}/{{audioTracks.length}}</span></a>
@@ -867,7 +866,8 @@ function createApp() {
             currentPlaylistIndex: -1,
             
             // Your existing subtitle app data
-            subtitlesFileContent: null,
+            subtitleContents: {},
+            subtitleOrder: [],
             subtitlesOffsetInput: "0.0",
             customOffsets: {},
             videoFileName: null,
@@ -944,41 +944,19 @@ function createApp() {
                 return Utils.parseInputNum(this.subtitlesOffsetInput);
             },
             captionsUrl: function () {
-                if (!this.subtitlesFileContent)
+                if (!this.activeCaptionSource || !this.captions[this.activeCaptionSource]) {
                     return null;
-
+                }
+        
                 try {
-                    var captions = this.fileToCaptions(this.subtitlesFileContent, this.subtitlesOffsetSeconds, this.customOffsets);
+                    var captions = this.captions[this.activeCaptionSource];
                     var vtt = this.formatVtt(captions);
                     if (!vtt) {
                         this.shouldShowSubtitlesError = true;
-                        this.subtitlesError = null;
+                        this.subtitlesError = "Could not format captions into VTT.";
                         return null;
                     }
-                    
-                    // Create a unique source ID for this subtitle file
-                    var sourceId = this.subtitlesFileName || ('subtitle_' + Date.now());
-                    
-                    // Add to captions map if it doesn't exist
-                    if (!this.captions[sourceId]) {
-                        // Add to sources list if it's a new source
-                        if (this.captionSources.indexOf(sourceId) === -1) {
-                            this.captionSources.push(sourceId);
-                        }
-                        
-                        // Set as active source if none is selected
-                        if (!this.activeCaptionSource) {
-                            this.activeCaptionSource = sourceId;
-                        }
-                    }
-                    
-                    // Store captions in the map
-                    this.$set(this.captions, sourceId, captions);
-                    console.log(this.captions);
-                    
-                    // Apply furigana to the current captions
-                    this.furigana(sourceId);
-                    
+        
                     var uri = "data:text/vtt;charset=utf-8," + encodeURIComponent(vtt);
                     this.shouldShowSubtitlesError = false;
                     this.subtitlesError = null;
@@ -1000,9 +978,11 @@ function createApp() {
                 var map = {};
                 var self = this;
                 Object.keys(this.captions).forEach(function(sourceId) {
-                    self.captions[sourceId].forEach(function(c) {
-                        map[c.id] = c;
-                    });
+                    if(self.captions[sourceId]){
+                        self.captions[sourceId].forEach(function(c) {
+                            map[c.id] = c;
+                        });
+                    }
                 });
                 return map;
             },
@@ -1024,97 +1004,80 @@ function createApp() {
                 return this.activeCaptions.some(isVoiced);
             },
             shownCaptions: function () {
-                if (!this.activeCaptions || !this.captions || !this.captionsMap || !this.isVoicedTime)
-                    return [];
-                    
-                // Filter out deleted captions
-                var activeCaptions = this.activeCaptions.filter(caption => 
-                    !this.savedSettings.deletedCaptionIds.includes(caption.id)
-                );
-                
-                // Filter out deleted captions
-                var activeCaptions = this.activeCaptions.filter(caption => 
-                    !this.savedSettings.deletedCaptionIds.includes(caption.id)
-                );
-                
-                if (!activeCaptions || activeCaptions.length === 0)
+                // Combine active captions across all sources by current time, independently
+                if (!this.captions || !this.captionSources || this.captionSources.length === 0)
                     return [];
 
-                // Get active captions from the current source
-                var active = this.activeCaptions;
-                var activeLanes = active.map(function (c) { return c.lane; });
-                var captionsWithUniqueLanes = active.filter(function (c, i) { return activeLanes.indexOf(c.lane) === i });
-                captionsWithUniqueLanes.sort(this.compareByLane);
-                
-                // Get active captions from all sources (except the current one)
-                var allCaptions = [];
-                var self = this;
                 var time = this.currentTime;
                 var buffer = this.captionBackwardMoveBufferSeconds;
-                
-                // Function to check if a caption is active at the current time
-                var isActive = function(caption) {
+                var self = this;
+
+                var result = [];
+
+                // Helper to determine if a caption is active at current time
+                var isActiveAtTime = function (caption) {
                     return caption.startTime < time && time < caption.endTime + buffer;
                 };
-                
-                // Add captions from other sources
-                this.captionSources.forEach(function(sourceId) {
-                    // Skip the active source as we've already processed it
-                    if (sourceId === self.activeCaptionSource) return;
-                    
-                    // Get captions from this source that are active at the current time
-                    if (self.captions[sourceId]) {
-                        var sourceCaptions = self.captions[sourceId].filter(isActive);
-                        if (sourceCaptions.length > 0) {
-                            // Add source information to the captions
-                            sourceCaptions.forEach(function(caption) {
-                                caption.sourceId = sourceId;
-                            });
-                            allCaptions = allCaptions.concat(sourceCaptions);
+
+                // 1) Active source first (preserve unique lanes within that source)
+                if (this.activeCaptionSource && this.captions[this.activeCaptionSource]) {
+                    var activeFromActiveSource = this.captions[this.activeCaptionSource]
+                        .filter(isActiveAtTime)
+                        .filter(function (c) { return !self.savedSettings.deletedCaptionIds.includes(c.id); });
+
+                    var seenLanes = new Set();
+                    activeFromActiveSource.forEach(function (c) {
+                        if (!seenLanes.has(c.lane)) {
+                            c.sourceId = self.activeCaptionSource;
+                            result.push(c);
+                            seenLanes.add(c.lane);
                         }
-                    }
+                    });
+                }
+
+                // 2) Other sources
+                this.captionSources.forEach(function (sourceId) {
+                    if (sourceId === self.activeCaptionSource) return;
+                    var list = self.captions[sourceId];
+                    if (!list || list.length === 0) return;
+                    var actives = list
+                        .filter(isActiveAtTime)
+                        .filter(function (c) { return !self.savedSettings.deletedCaptionIds.includes(c.id); });
+                    actives.forEach(function (c) {
+                        c.sourceId = sourceId;
+                        result.push(c);
+                    });
                 });
-                
-                // Combine captions from all sources
-                var result = captionsWithUniqueLanes.concat(allCaptions);
+
                 return result;
             },
             displayedLines: function () {
-                if (!this.shownCaptions || !this.shouldShowMainCaption)
+                if (!this.shownCaptions || !this.shouldShowMainCaption || this.subtitleOrder.length === 0)
                     return [];
             
-                let hasJapanese = false;
-            
-                // Sort captions by lane ascending, then by source
-                const sortedCaptions = this.shownCaptions.slice().sort((a, b) => {
-                    const laneDiff = (a.lane || 0) - (b.lane || 0);
-                    if (laneDiff !== 0) return laneDiff;
-                    return (a.sourceId || '').localeCompare(b.sourceId || '');
-                });
-            
-                const lines = [];
-                for (const caption of sortedCaptions) {
-                    if (!caption?.text) continue;
-            
-                    const isJap = isJapanese(caption.text);
-                    if (isJap && hasJapanese) continue; // only one JP caption
-            
-                    // Split into non-empty lines
-                    const captionLines = caption.text.split("\n").filter(l => l.trim());
-                    if (captionLines.length === 0) continue;
-            
-                    // Add caption lines, newest at the bottom
-                    for (const line of captionLines) {
-                        lines.push(line);
+                const linesBySource = {};
+                for (const caption of this.shownCaptions) {
+                    if (!caption?.text || !caption.sourceId) continue;
+                    if (!linesBySource[caption.sourceId]) {
+                        linesBySource[caption.sourceId] = [];
                     }
-            
-                    // Mark JP added
-                    if (isJap) hasJapanese = true;
+                    // Concatenate lines from multiple simultaneous captions of the same source
+                    const captionLines = caption.text.split("\n").filter(l => l.trim());
+                    linesBySource[caption.sourceId].push(...captionLines);
                 }
-            
-                return lines;
+        
+                const orderedLines = [];
+                for (const sourceId of this.subtitleOrder) {
+                    if (linesBySource[sourceId]) {
+                        // Join lines from a single source back into one block, and pass it with sourceId for styling.
+                        orderedLines.push({
+                            sourceId: sourceId,
+                            text: linesBySource[sourceId].join('\n')
+                        });
+                    }
+                }
+                return orderedLines;
             },
-            
             displayedHtml: function () {
                 if (!this.displayedLines || this.displayedLines.length === 0)
                     return "";
@@ -1122,29 +1085,28 @@ function createApp() {
                 var processedLines = [];
                 
                 for (var i = 0; i < this.displayedLines.length; i++) {
-                    var line = this.displayedLines[i];
+                    var lineInfo = this.displayedLines[i];
+                    var line = this.cleanSubtitleText(lineInfo.text);
                     if (!line || !line.trim()) continue;
                     
-                    // Clean up the line text
-                    line = this.cleanSubtitleText(line);
-                    if (!line.trim()) continue;
+                    var sourceIndex = this.subtitleOrder.indexOf(lineInfo.sourceId);
+
+                    // For now, we only support styling for the first two subtitle tracks
+                    if(sourceIndex > 1) continue;
+
+                    var isSubtitle1 = (sourceIndex === 0);
+                    var isSubtitle2 = (sourceIndex === 1);
                     
-                    // Determine if this should be subtitle-1 or subtitle-2
-                    var isJapaneseLine = isJapanese(line);
-                    var isSubtitle1 = isJapaneseLine;
-                    var lineClass = isSubtitle1 ? 'subtitle-1' : 'subtitle-2';
-                    
-                    // Skip if this line type is hidden
                     if ((isSubtitle1 && !this.savedSettings.showSubtitle1) || 
-                        (!isSubtitle1 && !this.savedSettings.showSubtitle2)) {
+                        (isSubtitle2 && !this.savedSettings.showSubtitle2)) {
                         continue;
                     }
+                    var lineClass = isSubtitle1 ? 'subtitle-1' : 'subtitle-2';
                     var fontSize = isSubtitle1 ? 
                         this.savedSettings.subtitle1FontSize : 
                         this.savedSettings.subtitle2FontSize;
                     
                     var displayStyle = `font-size: ${fontSize}em;`;
-                    // Visibility is handled by v-if in the template
                         
                     processedLines.push(`<div class="${lineClass}" style="${displayStyle}">${line}</div>`);
                 }
@@ -1154,7 +1116,10 @@ function createApp() {
             shownCaptionsKey: function () {
                 if (!this.shownCaptions || this.shownCaptions.length === 0)
                     return "";
-                return this.shownCaptions.map(function (c) { return c.id; }).join("_");
+                var self = this;
+                return this.shownCaptions.map(function (c) {
+                    return (c.sourceId || self.activeCaptionSource || '') + ':' + c.id;
+                }).join("_");
             },
             offsetButtonClass: function () {
                 return 'offset-button button' +
@@ -1256,6 +1221,15 @@ function createApp() {
                 // Video gets frozen after an audio track change, so update the time
                 this.getVideoElement().currentTime = this.currentTime;
             },
+            subtitlesOffsetSeconds: function() {
+                this.processAllSubtitles();
+            },
+            customOffsets: {
+                handler: function() {
+                    this.processAllSubtitles();
+                },
+                deep: true
+            },
             savedSettings: {
                 handler: function (newValue, oldValue) {
                     try {
@@ -1269,6 +1243,27 @@ function createApp() {
             }
         },
         methods: {
+            cycleSubtitleOrder: function(reverse = false) {
+                if (this.subtitleOrder.length < 2) return;
+                if (reverse) {
+                    this.subtitleOrder.unshift(this.subtitleOrder.pop());
+                } else {
+                    this.subtitleOrder.push(this.subtitleOrder.shift());
+                }
+                this.notify('Subtitle order changed');
+            },
+            processAllSubtitles: function() {
+                for (const sourceId in this.subtitleContents) {
+                    if (Object.hasOwnProperty.call(this.subtitleContents, sourceId)) {
+                        const content = this.subtitleContents[sourceId];
+                        const captions = this.fileToCaptions(content, this.subtitlesOffsetSeconds, this.customOffsets);
+                        if(captions){
+                            this.$set(this.captions, sourceId, captions);
+                            this.furigana(sourceId);
+                        }
+                    }
+                }
+            },
             cleanSubtitleText: function(text) {
                 if (!text) return '';
                 
@@ -1623,7 +1618,7 @@ function createApp() {
                         return;
                     }
                     let videoNG = !self.videoUrl || self.shouldShowVideoError;
-                    let sidebarNG = !self.captionsUrl || self.shouldShowSubtitlesError;
+                    let sidebarNG = self.captionSources.length === 0 || self.shouldShowSubtitlesError;
                     let eitherNG = videoNG || sidebarNG;
                     var stopEvent = function () {
                         e.preventDefault();
@@ -1685,6 +1680,20 @@ function createApp() {
                             stopEvent(e);
                             self.isAutoPauseMode = !self.isAutoPauseMode;
                             self.lastPauseTime = self.getCurrentTime();
+                            break;
+                        case 'j':
+                        case 'J':
+                            if (sidebarNG) return;
+                            if (e.ctrlKey || e.altKey || e.metaKey) return;
+                            stopEvent(e);
+                            self.cycleSubtitleOrder();
+                            break;
+                        case 'k':
+                        case 'K':
+                            if (sidebarNG) return;
+                            if (e.ctrlKey || e.altKey || e.metaKey) return;
+                            stopEvent(e);
+                            self.cycleSubtitleOrder(true);
                             break;
                         case '.':
                         case '>':
@@ -1981,7 +1990,7 @@ function createApp() {
             },
 
             calcGridTemplateAreas: function () {
-                if (!this.videoUrl && !this.captionsUrl && !this.shouldShowSubtitlesError) {
+                if (!this.videoUrl && this.captionSources.length === 0 && !this.shouldShowSubtitlesError) {
                     return "grid-template-areas: " +
                         "'video video video' " +
                         ";";
@@ -2188,58 +2197,16 @@ function createApp() {
             
             updateActiveCaptions: function() {
                 console.log('[DEBUG] updateActiveCaptions - called');
-                if (!this.captions || !this.activeCaptionSource) {
-                    console.log('[DEBUG] updateActiveCaptions - No captions or active source');
-                    return;
-                }
-                
-                var currentTime = this.getCurrentTime();
-                var sourceCaptions = this.captions[this.activeCaptionSource];
-                
-                if (!sourceCaptions || !sourceCaptions.length) {
-                    console.log('[DEBUG] updateActiveCaptions - No source captions available');
-                    return;
-                }
-                
-                console.log('[DEBUG] updateActiveCaptions - Checking', sourceCaptions.length, 'captions for time:', currentTime);
-                
-                // Find captions that should be active at the current time
-                var matchingCaptions = sourceCaptions.filter(function(caption) {
-                    return currentTime >= caption.startTime && currentTime <= caption.endTime;
-                });
-                
-                console.log('[DEBUG] updateActiveCaptions - Found', matchingCaptions.length, 'matching captions');
-                
-                if (matchingCaptions.length > 0) {
-                    var newIds = matchingCaptions.map(function(caption) { return caption.id; });
-                    
-                    // Only update if the IDs have changed
-                    var idsChanged = false;
-                    if (!this.activeCaptionIds || this.activeCaptionIds.length !== newIds.length) {
-                        idsChanged = true;
-                    } else {
-                        for (var i = 0; i < newIds.length; i++) {
-                            if (this.activeCaptionIds.indexOf(newIds[i]) === -1) {
-                                idsChanged = true;
-                                break;
-                            }
-                        }
-                    }
-                    
-                    if (idsChanged) {
-                        console.log('[DEBUG] updateActiveCaptions - Updating activeCaptionIds:', newIds);
-                        this.activeCaptionIds = newIds;
-                        
-                        // Just update the active captions without replaying
-                        if (this.activeCaptions && this.activeCaptions.length > 0) {
-                            console.log('[DEBUG] updateActiveCaptions - Updated active caption text:', this.activeCaptions[0].text);
-                        }
-                    }
-                } else if (this.activeCaptionIds && this.activeCaptionIds.length > 0) {
-                    // Clear active captions if no matches and we had active captions before
-                    console.log('[DEBUG] updateActiveCaptions - Clearing activeCaptionIds');
+                var track = this.getTrack();
+                if (!track || !track.activeCues) {
                     this.activeCaptionIds = [];
+                    return;
                 }
+                var newIds = [];
+                for (var i = 0; i < track.activeCues.length; i++) {
+                    newIds.push(track.activeCues[i].id);
+                }
+                this.activeCaptionIds = newIds;
             },
 
             getVideoElement: function () {
@@ -2409,54 +2376,20 @@ function createApp() {
             },
 
             idsToCaptions: function (ids) {
-                console.log('[DEBUG] idsToCaptions - ids:', ids);
-                if (!ids) {
-                    console.log('[DEBUG] idsToCaptions - No ids provided');
-                    return [];
-                }
-                if (!this.captions) {
-                    console.log('[DEBUG] idsToCaptions - No captions available');
-                    return [];
-                }
-                if (!this.activeCaptionSource) {
-                    console.log('[DEBUG] idsToCaptions - No activeCaptionSource');
-                    return [];
-                }
-                if (!this.captions[this.activeCaptionSource]) {
-                    console.log('[DEBUG] idsToCaptions - No captions for activeCaptionSource:', this.activeCaptionSource);
-                    return [];
-                }
-
+                if (!ids) return [];
                 var self = this;
-                var result = ids.map(function (id) { 
-                    var caption = self.captionsMap[id];
-                    console.log('[DEBUG] idsToCaptions - id:', id, 'found caption:', caption ? 'yes' : 'no');
-                    return caption; 
-                }).filter(function(caption) { 
-                    return caption !== undefined; 
-                });
-                
-                console.log('[DEBUG] idsToCaptions - Returning', result.length, 'captions');
-                return result;
+                return ids.map(function (id) { return self.captionsMap[id]; })
+                    .filter(function(caption) { return caption !== undefined; });
             },
             
             getCaptionsById: function(ids) {
                 if (!ids || ids.length === 0)
                     return [];
                     
-                if (!this.activeCaptionSource || !this.captions[this.activeCaptionSource])
-                    return [];
-                    
                 var self = this;
                 return ids.map(function(id) {
-                    // Look for the caption in the active source first
-                    var caption = self.captionsMap[id];
-                    if (caption) return caption;
-                    
-                    // If not found, try other sources
+                    // Look for the caption in all loaded sources
                     for (var sourceId in self.captions) {
-                        if (sourceId === self.activeCaptionSource) continue;
-                        
                         var sourceCaptions = self.captions[sourceId];
                         for (var i = 0; i < sourceCaptions.length; i++) {
                             if (sourceCaptions[i].id === id) {
@@ -2464,7 +2397,6 @@ function createApp() {
                             }
                         }
                     }
-                    
                     return undefined;
                 }).filter(function(caption) {
                     return caption !== undefined;
@@ -2498,102 +2430,28 @@ function createApp() {
             switchCaptionSource: function(sourceId) {
                 if (this.captionSources.indexOf(sourceId) !== -1) {
                     this.activeCaptionSource = sourceId;
-                    // Reset active captions when switching sources
                     this.activeCaptionIds = [];
                     this.clearAutoPauseCaptions();
+                    this.updateActiveCaptions();
                 }
             },
 
             playCaption: function (caption) {
-                console.log('[DEBUG] playCaption - caption:', caption);
-                if (!caption) {
-                    console.log('[DEBUG] playCaption - No caption provided');
+                if (!caption)
                     return;
-                }
-                
-                // Only seek if the current time is not within the caption's time range
-                const currentTime = this.getCurrentTime();
-                const isOutsideCaptionRange = currentTime < caption.startTime || currentTime > caption.endTime;
-                
-                console.log('[DEBUG] playCaption - Current time:', currentTime, 'Caption range:', caption.startTime + ' - ' + caption.endTime, 'Outside range:', isOutsideCaptionRange);
-                
-                if (isOutsideCaptionRange) {
-                    console.log('[DEBUG] playCaption - Seeking to:', caption.startTime + 0.0001);
-                    this.setCurrentTime(caption.startTime + 0.0001, true);
-                } else {
-                    console.log('[DEBUG] playCaption - Already within caption time range, not seeking');
-                }
-                
-                // Update active caption without causing a seek
+
+                this.setCurrentTime(caption.startTime + 0.0001, true);
                 this.activeCaptionIds = [caption.id];
-                console.log('[DEBUG] playCaption - Set activeCaptionIds to:', this.activeCaptionIds);
             },
 
             replayCaption: function () {
-                console.log('[DEBUG] replayCaption - called');
-                var currentCaption = null;
-                var video = this.getVideoElement();
-                
-                // Try to get the current caption from activeCaptions
-                if (this.activeCaptions && this.activeCaptions.length > 0) {
-                    currentCaption = this.activeCaptions[0];
-                    console.log('[DEBUG] replayCaption - Using first activeCaption');
-                }
-                
-                // If no active caption, try to find one at the current time
-                if (!currentCaption) {
-                    var currentTime = video ? video.currentTime : this.currentTime;
-                    var sourceCaptions = this.captions[this.activeCaptionSource];
-                    if (sourceCaptions && sourceCaptions.length) {
-                        // Find caption that includes current time
-                        for (var i = 0; i < sourceCaptions.length; i++) {
-                            if (currentTime >= sourceCaptions[i].startTime && currentTime <= sourceCaptions[i].endTime) {
-                                currentCaption = sourceCaptions[i];
-                                console.log('[DEBUG] replayCaption - Found caption at current time:', currentCaption);
-                                break;
-                            }
-                        }
-                        
-                        // If still no caption, find the next upcoming caption
-                        if (!currentCaption) {
-                            console.log('[DEBUG] replayCaption - Finding next upcoming caption');
-                            for (var j = 0; j < sourceCaptions.length; j++) {
-                                if (sourceCaptions[j].startTime > currentTime) {
-                                    currentCaption = sourceCaptions[j];
-                                    break;
-                                }
-                            }
-                            
-                            // If no upcoming caption, use the last one
-                            if (!currentCaption) {
-                                console.log('[DEBUG] replayCaption - Falling back to last caption');
-                                currentCaption = sourceCaptions[sourceCaptions.length - 1];
-                            }
-                        }
-                    }
-                }
-                
-                console.log('[DEBUG] replayCaption - currentCaption:', currentCaption);
-                if (currentCaption) {
-                    // Seek to the start of the caption
-                    if (video) {
-                        video.currentTime = currentCaption.startTime;
-                        console.log(`[DEBUG] replayCaption - Seeking to ${currentCaption.startTime}s`);
-                        
-                        // If video is paused, play it after seeking
-                        if (video.paused) {
-                            video.play().catch(error => {
-                                console.error('Error playing video:', error);
-                            });
-                        }
-                    }
-                    
-                    // Update active caption
-                    this.activeCaptionIds = [currentCaption.id];
-                    console.log('[DEBUG] replayCaption - Set activeCaptionIds to:', this.activeCaptionIds);
-                } else {
-                    console.log('[DEBUG] replayCaption - No caption to replay');
-                }
+                var currentCaption;
+                if (this.activeCaptions && this.activeCaptions.length > 0)
+                    currentCaption = this.activeCaptions[0]
+                else
+                    return;
+
+                this.playCaption(currentCaption);
             },
 
             previousCaption: function (e) {
@@ -2813,29 +2671,14 @@ function createApp() {
             },
 
             getTrack: function () {
-                console.log('[DEBUG] getTrack - called');
                 var videoElement = this.getVideoElement();
-                console.log('[DEBUG] getTrack - videoElement:', videoElement ? 'exists' : 'null');
-                if (!videoElement) {
-                    console.log('[DEBUG] getTrack - No video element');
+                if (!videoElement || !videoElement.textTracks || videoElement.textTracks.length === 0)
                     return null;
-                }
-                console.log('[DEBUG] getTrack - textTracks:', videoElement.textTracks ? videoElement.textTracks.length : 'null');
-                if (!videoElement.textTracks || videoElement.textTracks.length === 0) {
-                    console.log('[DEBUG] getTrack - No text tracks available');
-                    return null;
-                }
-                
-                // Ensure the track is in showing mode
                 var track = videoElement.textTracks[0];
-                if (track && track.mode !== "showing") {
+                if (track.mode !== "showing")
                     track.mode = "showing";
-                    console.log('[DEBUG] getTrack - Set track.mode to showing');
-                }
-                
-                console.log('[DEBUG] getTrack - Returning track 0');
                 return track;
-            },                    
+            },
 
             enableAudioTrack: function (audioTrackIndex) {
                 for (var i = 0; i < this.audioTracks.length; i++)
@@ -2867,34 +2710,12 @@ function createApp() {
             },
 
             onCaptionsLoad: function (e) {
-                console.log('[DEBUG] onCaptionsLoad - called');
-                
-                // Initialize captions map for faster lookup
-                if (this.captions && this.activeCaptionSource) {
-                    console.log('[DEBUG] onCaptionsLoad - Initializing captionsMap');
-                    this.captionsMap = {};
-                    var sourceCaptions = this.captions[this.activeCaptionSource];
-                    if (sourceCaptions && sourceCaptions.length) {
-                        for (var i = 0; i < sourceCaptions.length; i++) {
-                            var caption = sourceCaptions[i];
-                            if (caption && caption.id) {
-                                this.captionsMap[caption.id] = caption;
-                            }
-                        }
-                        console.log('[DEBUG] onCaptionsLoad - Initialized captionsMap with', Object.keys(this.captionsMap).length, 'captions');
-                    }
-                }
-                
-                // Check for captions at the current time
                 this.updateActiveCaptions();
             },
 
             onCaptionsCueChange: function (e) {
-                console.log('[DEBUG] onCaptionsCueChange - called');
-                
-                // We're using our manual caption tracking system instead
-                // This function is kept for compatibility but doesn't do anything
-                console.log('[DEBUG] onCaptionsCueChange - Using manual caption tracking instead');
+                this.updateActiveCaptions();
+                this.handleAutoPauseCaptionUpdate(this.activeCaptionIds);
             },
 
             handleAutoPauseCaptionUpdate: function (newCaptionIds) {
@@ -2972,21 +2793,32 @@ function createApp() {
             isCaptions: function (file) {
                 return /\.(vtt|srt|ass|ssa)$/i.test(file.name);
             },
-            loadCaptions: function (file) {
+            loadCaptions: function(file) {
                 this.subtitlesFileName = file.name;
-                this.shouldShowSubtitlesError = false;
-                this.subtitlesError = null;
-                var reader = new FileReader();
-                reader.readAsText(file);
                 var self = this;
-                reader.onload = function (e) {
-                    console.log(e, self, reader.result);
-                    self.subtitlesFileContent = reader.result;
-                    self.activeCaptionIds = [];
-                    self.customOffsets = {};
-                    if (self.sideBarX > 0.99)
+                var reader = new FileReader();
+                reader.onload = function(e) {
+                    var content = e.target.result;
+                    var sourceId = file.name;
+        
+                    self.$set(self.subtitleContents, sourceId, content);
+        
+                    if (self.captionSources.indexOf(sourceId) === -1) {
+                        self.captionSources.push(sourceId);
+                        self.subtitleOrder.push(sourceId);
+                    }
+        
+                    if (!self.activeCaptionSource) {
+                        self.activeCaptionSource = sourceId;
+                    }
+        
+                    self.processAllSubtitles();
+        
+                    if (self.sideBarX > 0.99) {
                         self.toggleSidebar();
+                    }
                 };
+                reader.readAsText(file);
             },
 
             stripHtml: function (line) {
