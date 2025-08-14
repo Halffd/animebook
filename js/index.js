@@ -1,3 +1,6 @@
+
+// js/index.js
+
 var API_URL = 'http://127.0.0.1:5000'; // Replace with your API URL
 
 // Enable CORS for all routes
@@ -892,7 +895,6 @@ function createApp() {
             videoKey: 1,
             trackKey: 1,
             captionMoveLimitSeconds: 6.0,
-            captionBackwardMoveBufferSeconds: 2.0,
             textSelection: "",
             isAutoPauseMode: false,
             autoPauseCaptions: [],
@@ -997,58 +999,46 @@ function createApp() {
             },
             isVoicedTime: function () {
                 var time = this.currentTime;
-                var buffer = this.captionBackwardMoveBufferSeconds;
                 var isVoiced = function (caption) {
-                    return caption.startTime < time && time < caption.endTime + buffer;
+                    return caption.startTime <= time && time <= caption.endTime;
                 };
                 return this.activeCaptions.some(isVoiced);
             },
             shownCaptions: function () {
-                // Combine active captions across all sources by current time, independently
                 if (!this.captions || !this.captionSources || this.captionSources.length === 0)
                     return [];
-
+            
                 var time = this.currentTime;
-                var buffer = this.captionBackwardMoveBufferSeconds;
                 var self = this;
-
                 var result = [];
-
-                // Helper to determine if a caption is active at current time
+            
+                // Small buffer to catch lines we might miss due to timing
+                var catchBuffer = 0.1; // Just enough to not miss lines
+                
                 var isActiveAtTime = function (caption) {
-                    return caption.startTime < time && time < caption.endTime + buffer;
+                    // Show if we're in the caption time OR just passed it recently
+                    return (caption.startTime <= time && time <= caption.endTime) ||
+                           (caption.endTime >= time - catchBuffer && caption.startTime <= time);
                 };
-
-                // 1) Active source first (preserve unique lanes within that source)
-                if (this.activeCaptionSource && this.captions[this.activeCaptionSource]) {
-                    var activeFromActiveSource = this.captions[this.activeCaptionSource]
-                        .filter(isActiveAtTime)
-                        .filter(function (c) { return !self.savedSettings.deletedCaptionIds.includes(c.id); });
-
-                    var seenLanes = new Set();
-                    activeFromActiveSource.forEach(function (c) {
-                        if (!seenLanes.has(c.lane)) {
-                            c.sourceId = self.activeCaptionSource;
-                            result.push(c);
-                            seenLanes.add(c.lane);
-                        }
-                    });
-                }
-
-                // 2) Other sources
+            
+                // For each source, only take the LATEST active caption
                 this.captionSources.forEach(function (sourceId) {
-                    if (sourceId === self.activeCaptionSource) return;
-                    var list = self.captions[sourceId];
-                    if (!list || list.length === 0) return;
-                    var actives = list
+                    if (!self.captions[sourceId] || self.captions[sourceId].length === 0) return;
+                    
+                    var actives = self.captions[sourceId]
                         .filter(isActiveAtTime)
                         .filter(function (c) { return !self.savedSettings.deletedCaptionIds.includes(c.id); });
-                    actives.forEach(function (c) {
-                        c.sourceId = sourceId;
-                        result.push(c);
-                    });
+                    
+                    if (actives.length > 0) {
+                        // Take only the most recent one per source
+                        var latest = actives.reduce((prev, current) => 
+                            (current.startTime > prev.startTime) ? current : prev
+                        );
+                        latest.sourceId = sourceId;
+                        result.push(latest);
+                    }
                 });
-
+            
                 return result;
             },
             displayedLines: function () {
@@ -2378,7 +2368,7 @@ function createApp() {
             idsToCaptions: function (ids) {
                 if (!ids) return [];
                 var self = this;
-                return ids.map(function (id) { return self.captionsMap[id]; })
+                return ids.map(function (id) { return self.allCaptionsMap[id]; })
                     .filter(function(caption) { return caption !== undefined; });
             },
             
@@ -2472,7 +2462,7 @@ function createApp() {
                         return null;
 
                     var currentCaption = numCaptions < 0 ? currentCaptions[0] : currentCaptions[currentCaptions.length - 1]
-                    if (numCaptions < 0 && (currentCaption.endTime + self.captionBackwardMoveBufferSeconds) < currentTime)
+                    if (numCaptions < 0 && (currentCaption.endTime < currentTime))
                         return currentCaption;
 
                     if (numCaptions > 0 && (currentTime < currentCaption.startTime - 0.01))
@@ -2491,7 +2481,7 @@ function createApp() {
             },
 
             findNeighboringCaptionByOffset: function (caption, offset) {
-                return this.captionsMap["id_" + (parseInt(caption.id.replace("id_", "")) + offset)];
+                return this.allCaptionsMap["id_" + (parseInt(caption.id.replace("id_", "")) + offset)];
             },
 
             shiftVideoTime: function (numShifts) {
@@ -2507,7 +2497,7 @@ function createApp() {
                 if (numCaptionsMovingBy > 0) {
                     return Math.abs(currentTime - nextCaption.startTime) > this.captionMoveLimitSeconds
                 } else {
-                    return Math.abs(currentTime - (nextCaption.endTime + this.captionBackwardMoveBufferSeconds)) > this.captionMoveLimitSeconds
+                    return Math.abs(currentTime - nextCaption.endTime) > this.captionMoveLimitSeconds
                 }
             },
 
