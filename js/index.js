@@ -894,7 +894,7 @@ function createApp() {
             resizeBarClick: null,
             videoKey: 1,
             trackKey: 1,
-            captionMoveLimitSeconds: 6.0,
+            captionMoveLimitSeconds: 12.0,
             textSelection: "",
             isAutoPauseMode: false,
             autoPauseCaptions: [],
@@ -1013,8 +1013,8 @@ function createApp() {
                 var result = [];
             
                 // Small buffer to catch lines we might miss due to timing
-                var maxBuffer = 1.5; // 1.5s
-                var bufferRate = 0.025; // 30 char = 0.75s
+                var maxBuffer = 0.5; // 0.5s
+                var bufferRate = 0.005; // 30 char = 0.15s
                 
                 var isActiveAtTime = function (caption) {
                     // Show if we're in the caption time OR just passed it recently
@@ -1637,6 +1637,7 @@ function createApp() {
                             stopEvent(e);
                             self.replayCaption();
                             break;
+                        case 'w':
                         case 'ArrowUp':
                             // Toggle visibility of captions
                             if (eitherNG)
@@ -1649,8 +1650,14 @@ function createApp() {
                             if (eitherNG)
                                 return;
                             stopEvent(e);
-                            self.previousCaption();
+                            if(e.ctrlKey){
+                                // seek 5 seconds
+                                self.seek(-5);
+                            } else {
+                                self.previousCaption();
+                            }
                             break;
+                        case 's':
                         case 'ArrowDown':
                             // replay current caption
                             if (eitherNG)
@@ -1662,9 +1669,13 @@ function createApp() {
                             if (eitherNG)
                                 return;
                             stopEvent(e);
-                            self.nextCaption();
+                            if(e.ctrlKey){
+                                // seek 5 seconds
+                                self.seek(5);
+                            } else {
+                                self.nextCaption();
+                            }
                             break;
-                        case 'a':
                         case 'A':
                             if (sidebarNG)
                                 return;
@@ -1712,7 +1723,6 @@ function createApp() {
                             stopEvent(e);
                             self.shouldShowHelpPopup = !self.shouldShowHelpPopup;
                             break;
-                        case 's':
                         case 'S':
                             if (videoNG)
                                 return;
@@ -1746,7 +1756,7 @@ function createApp() {
                             if (eitherNG) return;
                             if (e.ctrlKey || e.altKey || e.metaKey) return;
                             stopEvent(e);
-                            if (e.shiftKey) {
+                            if (e.ctrlKey) {
                                 // Shift+V: Toggle subtitle-2 visibility
                                 self.savedSettings.showSubtitle2 = !self.savedSettings.showSubtitle2;
                                 self.notify(`Subtitle 2: ${self.savedSettings.showSubtitle2 ? 'Shown' : 'Hidden'}`);
@@ -2436,17 +2446,12 @@ function createApp() {
                 this.setCurrentTime(caption.startTime + 0.0001, true);
                 this.activeCaptionIds = [caption.id];
             },
-
-            replayCaption: function () {
-                var currentCaption;
-                if (this.activeCaptions && this.activeCaptions.length > 0)
-                    currentCaption = this.activeCaptions[0]
-                else
-                    return;
-
+            replayCaption: function() {
+                const currentCaption = this.getCurrentCaption(this.currentTime);
+                if (!currentCaption) return;
+                
                 this.playCaption(currentCaption);
             },
-
             previousCaption: function (e) {
                 this.moveCaptionsBy(-1);
             },
@@ -2455,32 +2460,31 @@ function createApp() {
                 this.moveCaptionsBy(1);
             },
 
-            moveCaptionsBy: function (numCaptions) {
-                if (!this.captions)
+            moveCaptionsBy: function(numCaptions) {
+                if (!this.captions || numCaptions === 0) return;
+                
+                const currentCaption = this.getCurrentCaption(this.currentTime);
+                if (!currentCaption) {
+                    this.shiftVideoTime(numCaptions);
                     return;
-
-                var self = this;
-                var getNext = function (currentCaptions, currentTime) {
-                    if (!currentCaptions || currentCaptions.length === 0)
-                        return null;
-
-                    var currentCaption = numCaptions < 0 ? currentCaptions[0] : currentCaptions[currentCaptions.length - 1]
-                    if (numCaptions < 0 && (currentCaption.endTime < currentTime))
-                        return currentCaption;
-
-                    if (numCaptions > 0 && (currentTime < currentCaption.startTime - 0.01))
-                        return currentCaption;
-
-                    return self.findNeighboringCaptionByOffset(currentCaption, numCaptions);
                 }
-
-                var captions = this.activeCaptions;
-                var next = getNext(captions, this.currentTime);
-                if (!next || this.tooFarAway(this.currentTime, next, numCaptions)) {
+                
+                const targetCaption = this.findNeighboringCaptionByOffset(currentCaption, numCaptions);
+                
+                if (!targetCaption || this.tooFarAway(this.currentTime, targetCaption, numCaptions)) {
                     this.shiftVideoTime(numCaptions);
                 } else {
-                    this.playCaption(next);
+                    this.playCaption(targetCaption);
                 }
+            },
+
+            getCurrentCaption: function(time) {
+                for (let caption of this.activeCaptions) {
+                    if (caption.startTime <= time && time <= caption.endTime) {
+                        return caption;
+                    }
+                }
+                return null;
             },
 
             findNeighboringCaptionByOffset: function (caption, offset) {
