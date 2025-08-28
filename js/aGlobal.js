@@ -241,7 +241,7 @@ async function makeFurigana(text, mode = 'A') {
 
     const furigana = [];
     for (const token of tokens) {
-        furigana.push(token_to_dict(token, false, true, undefined, true));
+        furigana.push(token_to_dict(token, false, true, undefined, false));
     }
 
     return furigana;

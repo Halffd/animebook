@@ -1,6 +1,3 @@
-
-// js/index.js
-
 var API_URL = 'http://127.0.0.1:5000'; // Replace with your API URL
 
 // Enable CORS for all routes
@@ -95,26 +92,17 @@ function isParticleChar(char) {
     return particles.includes(char);
 }
 
-function getWordType(kj, kn) {
-    if (!kj) return 'default';
-    
-    // Check for particles first
-    if (kj.length === 1 && isParticleChar(kj)) {
-        return 'particle';
+function getWordType(token, surface) {
+    if (token) {
+        if (token.pos === '助詞') return 'particle';
+    } else {
+        // Fallback for when token is not available.
+        if (isParticleChar(surface)) return 'particle';
     }
-    
-    const isKana = (s) => /^[\u3040-\u309F\u30A0-\u30FFー]+$/.test(s);
-    const isKanji = (s) => /[\u4e00-\u9faf]/.test(s);
-    
-    // Check for particles in the text
-    for (let i = 0; i < kj.length; i++) {
-        if (isParticleChar(kj[i])) {
-            return 'particle';
-        }
-    }
-    
-    if (isKanji(kj)) return 'kanji';
-    if (isKana(kj)) return 'kana';
+
+    if (surface && /[\u4e00-\u9faf]/.test(surface)) return 'kanji';
+    if (surface && /[\u3040-\u309f\u30a0-\u30ff]/.test(surface)) return 'kana';
+
     return 'default';
 }
 function stripRubyTags(html) {
@@ -387,16 +375,9 @@ var Utils = {
           </div>
           <div class="captions-container">
             <div class="captions-list" lang="ja">
-              <!-- Display captions from all sources -->
-              <template v-for="sourceId in captionSources">
-                <!-- Source header -->
-                <div class="caption-source-header" v-if="captionSources.length > 1 && captions[sourceId] && captions[sourceId].length > 0" :key="'header-'+sourceId">
-                  {{ getSourceName(sourceId) }}
-                  <span class="source-active-indicator" v-if="sourceId === activeCaptionSource">(active)</span>
-                </div>
-                
-                <!-- Captions from this source -->
-                <span v-if="captions[sourceId]" v-for="(caption, index) in captions[sourceId]" class="caption-controls" :key="sourceId + '-' + caption.id">
+              <!-- Display captions from the active source -->
+              <template v-if="captions[activeCaptionSource]">
+                <span v-for="caption in captions[activeCaptionSource]" class="caption-controls" :key="activeCaptionSource + '-' + caption.id">
                   <caption-item 
                     @select-caption="selectCaption"
                     @set-custom-offset="setCustomOffset"
@@ -405,7 +386,6 @@ var Utils = {
                     :isAutoPauseMode="isAutoPauseMode"
                     :isOffsetMode="isOffsetMode"
                     :currentTime="bufferTime"
-                    :class="{'active-source': sourceId === activeCaptionSource}"
                   ></caption-item>
                 </span>
               </template>
@@ -779,13 +759,12 @@ function createApp() {
             @loadeddata="onVideoLoad" preload="auto" playsinline webkit-playsinline x5-playsinline
             x5-video-player-type="h5" x5-video-player-fullscreen="true" x5-video-orientation="landscape"
             :key="videoKey">
-            <track v-if="captionsUrl" :key="trackKey" kind="subtitles" :src="captionsUrl" @load="onCaptionsLoad"
-              @cuechange="onCaptionsCueChange" default />
+            <track v-if="captionsUrl" :key="trackKey" kind="subtitles" :src="captionsUrl" default />
             <p>Your browser doesn't support HTML5 video. Here is a <a :href="videoUrl">link to the video</a> instead.</p>
           </video>
 
           <div class="current-caption"
-            :key="shownCaptionsKey" lang="ja" v-html="displayedHtml"></div>
+            :key="shownCaptionsKey" lang="ja" v-html="displayedHtml" :style="captionContainerStyle"></div>
         </div>
 
         <button @click="toggleVideoList" class="back-button">Back to Videos</button>
@@ -798,7 +777,7 @@ function createApp() {
         
         <div class="sidebar">
           <caption-bar @select-caption="selectCaption" @set-custom-offset="setCustomOffset"
-            @switch-source="switchCaptionSource" :captions="captions" :custom-offsets="customOffsets"
+            @switch-source="switchCaptionSource" :captions="filteredCaptions" :custom-offsets="customOffsets"
             :is-auto-pause-mode="isAutoPauseMode" :is-offset-mode="isOffsetMode" :current-time="currentTime"
             v-if="captionSources.length > 0" :caption-sources="captionSources"
             :active-caption-source="activeCaptionSource"></caption-bar>
@@ -918,11 +897,18 @@ function createApp() {
             bigJumpSeconds: 87,
             isLocalStorageAvailable: true,
             shouldHideRegexMatches: false,
+            maxCaptionLines: 7,
+            isMaxLinesMode: false,
             savedSettings: {
                 videoAlignment: 'top',
                 showVideoControls: true,
                 subtitle1FontSize: 1.0,
                 subtitle2FontSize: 1.0,
+                subtitle1FontWeight: 600,
+                subtitle2FontWeight: 400,
+                subtitle1TextShadowSize: 5,
+                subtitle2TextShadowSize: 5,
+                subtitleVerticalPosition: 5,
                 subtitleDelay: 0.0, // in seconds
                 showSubtitle1: true,
                 showSubtitle2: true,
@@ -932,13 +918,22 @@ function createApp() {
                     { regex: '\\(\\(.*?\\)\\)', replaceText: '' },
                     { regex: '\\(.*?\\)', replaceText: '' },
                     { regex: '（.*?）', replaceText: '' }
-                ],
-                textShadowSize: 2,
-                fontWeight: 400
+                ]
             },
             autoSaveInterval: null,
         },
         computed: {
+            filteredCaptions: function() {
+                const filtered = {};
+                for (const sourceId in this.captions) {
+                    if (this.captions.hasOwnProperty(sourceId) && this.captions[sourceId]) {
+                        filtered[sourceId] = this.captions[sourceId].filter(
+                            c => !this.savedSettings.deletedCaptionIds.includes(c.id)
+                        );
+                    }
+                }
+                return filtered;
+            },
             dropWrapperClass: function () {
                 return this.isDraggingFile ? "dragging-file" : "";
             },
@@ -1012,19 +1007,14 @@ function createApp() {
                 var self = this;
                 var result = [];
             
-                // Small buffer to catch lines we might miss due to timing
-                var maxBuffer = 0.5; // 0.5s
+                var maxBuffer = 0.3; // 0.3s
                 var bufferRate = 0.005; // 30 char = 0.15s
                 
                 var isActiveAtTime = function (caption) {
-                    // Show if we're in the caption time OR just passed it recently
-                    //return (caption.startTime <= time && time <= caption.endTime) ||
-                    //       (caption.endTime >= time - catchBuffer && caption.startTime <= time);
-                    var smartBuffer = Math.min(maxBuffer, caption.text.length * bufferRate); // 20ms per char, max 300ms
+                    var smartBuffer = Math.min(maxBuffer, caption.text.length * bufferRate);
                     return (caption.startTime <= time && time <= caption.endTime + smartBuffer);
                 };
             
-                // For each source, only take the LATEST active caption
                 this.captionSources.forEach(function (sourceId) {
                     if (!self.captions[sourceId] || self.captions[sourceId].length === 0) return;
                     
@@ -1032,16 +1022,19 @@ function createApp() {
                         .filter(isActiveAtTime)
                         .filter(function (c) { return !self.savedSettings.deletedCaptionIds.includes(c.id); });
                     
-                    if (actives.length > 0) {
-                        // Take only the most recent one per source
-                        var latest = actives.reduce((prev, current) => 
-                            (current.startTime > prev.startTime) ? current : prev
-                        );
-                        latest.sourceId = sourceId;
-                        result.push(latest);
-                    }
+                    actives.forEach(function(cap) {
+                        cap.sourceId = sourceId;
+                        result.push(cap);
+                    });
                 });
             
+                result.sort((a, b) => a.startTime - b.startTime);
+
+                var limit = this.isMaxLinesMode ? 50 : this.maxCaptionLines;
+                if (result.length > limit) {
+                    return result.slice(result.length - limit);
+                }
+
                 return result;
             },
             displayedLines: function () {
@@ -1098,13 +1091,24 @@ function createApp() {
                     var fontSize = isSubtitle1 ? 
                         this.savedSettings.subtitle1FontSize : 
                         this.savedSettings.subtitle2FontSize;
+                    var fontWeight = isSubtitle1 ?
+                        this.savedSettings.subtitle1FontWeight :
+                        this.savedSettings.subtitle2FontWeight;
+                    var textShadowSize = isSubtitle1 ?
+                        this.savedSettings.subtitle1TextShadowSize :
+                        this.savedSettings.subtitle2TextShadowSize;
                     
-                    var displayStyle = `font-size: ${fontSize}em;`;
+                    var displayStyle = `font-size: ${fontSize}em; font-weight: ${fontWeight}; text-shadow: ${this.generateTextShadow(textShadowSize)};`;
                         
                     processedLines.push(`<div class="${lineClass}" style="${displayStyle}">${line}</div>`);
                 }
                 
                 return processedLines.join("");
+            },
+            captionContainerStyle: function() {
+                return {
+                    bottom: `${this.savedSettings.subtitleVerticalPosition}%`
+                };
             },
             shownCaptionsKey: function () {
                 if (!this.shownCaptions || this.shownCaptions.length === 0)
@@ -1638,39 +1642,57 @@ function createApp() {
                             self.replayCaption();
                             break;
                         case 'w':
-                        case 'ArrowUp':
-                            // Toggle visibility of captions
                             if (eitherNG)
                                 return;
                             stopEvent(e);
                             self.shouldShowMainCaption = !self.shouldShowMainCaption;
                             self.notify(self.shouldShowMainCaption ? 'Subtitles shown' : 'Subtitles hidden');
                             break;
+                        case 'ArrowUp':
+                             if (eitherNG) return;
+                            if (e.ctrlKey) {
+                                stopEvent(e);
+                                self.savedSettings.subtitleVerticalPosition = Math.min(90, self.savedSettings.subtitleVerticalPosition + 1);
+                                self.notify(`V-Pos: ${self.savedSettings.subtitleVerticalPosition}%`);
+                            } else {
+                                stopEvent(e);
+                                self.shouldShowMainCaption = !self.shouldShowMainCaption;
+                                self.notify(self.shouldShowMainCaption ? 'Subtitles shown' : 'Subtitles hidden');
+                            }
+                            break;
                         case 'ArrowLeft':
                             if (eitherNG)
                                 return;
                             stopEvent(e);
                             if(e.ctrlKey){
-                                // seek 5 seconds
                                 self.seek(-5);
                             } else {
                                 self.previousCaption();
                             }
                             break;
                         case 's':
-                        case 'ArrowDown':
                             // replay current caption
                             if (eitherNG)
                                 return;
                             stopEvent(e);
                             self.replayCaption();
                             break;
+                        case 'ArrowDown':
+                            if (eitherNG) return;
+                            if (e.ctrlKey) {
+                                stopEvent(e);
+                                self.savedSettings.subtitleVerticalPosition = Math.max(0, self.savedSettings.subtitleVerticalPosition - 1);
+                                self.notify(`V-Pos: ${self.savedSettings.subtitleVerticalPosition}%`);
+                            } else {
+                                stopEvent(e);
+                                self.replayCaption();
+                            }
+                            break;
                         case 'ArrowRight':
                             if (eitherNG)
                                 return;
                             stopEvent(e);
                             if(e.ctrlKey){
-                                // seek 5 seconds
                                 self.seek(5);
                             } else {
                                 self.nextCaption();
@@ -1822,14 +1844,30 @@ function createApp() {
                         case 'G':
                             if (eitherNG) return;
                             stopEvent(e);
-                            if (e.shiftKey) {
-                                // Decrease subtitle 2 font size
-                                self.savedSettings.subtitle2FontSize = Math.max(0.5, self.savedSettings.subtitle2FontSize - 0.1);
-                                self.notify(`Subtitle 2 size: ${self.savedSettings.subtitle2FontSize.toFixed(1)}`);
+                            if (e.altKey) {
+                                if (e.shiftKey) {
+                                    self.savedSettings.subtitle2FontWeight = Math.max(100, self.savedSettings.subtitle2FontWeight - 100);
+                                    self.notify(`Subtitle 2 Weight: ${self.savedSettings.subtitle2FontWeight}`);
+                                } else {
+                                    self.savedSettings.subtitle1FontWeight = Math.max(100, self.savedSettings.subtitle1FontWeight - 100);
+                                    self.notify(`Subtitle 1 Weight: ${self.savedSettings.subtitle1FontWeight}`);
+                                }
+                            } else if (e.ctrlKey) {
+                                if (e.shiftKey) {
+                                    self.savedSettings.subtitle2TextShadowSize = Math.max(0, self.savedSettings.subtitle2TextShadowSize - 1);
+                                    self.notify(`Subtitle 2 Shadow: ${self.savedSettings.subtitle2TextShadowSize}`);
+                                } else {
+                                    self.savedSettings.subtitle1TextShadowSize = Math.max(0, self.savedSettings.subtitle1TextShadowSize - 1);
+                                    self.notify(`Subtitle 1 Shadow: ${self.savedSettings.subtitle1TextShadowSize}`);
+                                }
                             } else {
-                                // Decrease subtitle 1 font size
-                                self.savedSettings.subtitle1FontSize = Math.max(0.5, self.savedSettings.subtitle1FontSize - 0.1);
-                                self.notify(`Subtitle 1 size: ${self.savedSettings.subtitle1FontSize.toFixed(1)}`);
+                                if (e.shiftKey) {
+                                    self.savedSettings.subtitle2FontSize = Math.max(0.5, self.savedSettings.subtitle2FontSize - 0.1);
+                                    self.notify(`Subtitle 2 size: ${self.savedSettings.subtitle2FontSize.toFixed(1)}`);
+                                } else {
+                                    self.savedSettings.subtitle1FontSize = Math.max(0.5, self.savedSettings.subtitle1FontSize - 0.1);
+                                    self.notify(`Subtitle 1 size: ${self.savedSettings.subtitle1FontSize.toFixed(1)}`);
+                                }
                             }
                             break;
                         case 'R':
@@ -1848,14 +1886,30 @@ function createApp() {
                         case 'H':
                             if (eitherNG) return;
                             stopEvent(e);
-                            if (e.shiftKey) {
-                                // Increase subtitle 2 font size
-                                self.savedSettings.subtitle2FontSize = Math.min(3.0, self.savedSettings.subtitle2FontSize + 0.1);
-                                self.notify(`Subtitle 2 size: ${self.savedSettings.subtitle2FontSize.toFixed(1)}`);
+                             if (e.altKey) {
+                                if (e.shiftKey) {
+                                    self.savedSettings.subtitle2FontWeight = Math.min(900, self.savedSettings.subtitle2FontWeight + 100);
+                                    self.notify(`Subtitle 2 Weight: ${self.savedSettings.subtitle2FontWeight}`);
+                                } else {
+                                    self.savedSettings.subtitle1FontWeight = Math.min(900, self.savedSettings.subtitle1FontWeight + 100);
+                                    self.notify(`Subtitle 1 Weight: ${self.savedSettings.subtitle1FontWeight}`);
+                                }
+                            } else if (e.ctrlKey) {
+                                if (e.shiftKey) {
+                                    self.savedSettings.subtitle2TextShadowSize = Math.min(10, self.savedSettings.subtitle2TextShadowSize + 1);
+                                    self.notify(`Subtitle 2 Shadow: ${self.savedSettings.subtitle2TextShadowSize}`);
+                                } else {
+                                    self.savedSettings.subtitle1TextShadowSize = Math.min(10, self.savedSettings.subtitle1TextShadowSize + 1);
+                                    self.notify(`Subtitle 1 Shadow: ${self.savedSettings.subtitle1TextShadowSize}`);
+                                }
                             } else {
-                                // Increase subtitle 1 font size
-                                self.savedSettings.subtitle1FontSize = Math.min(3.0, self.savedSettings.subtitle1FontSize + 0.1);
-                                self.notify(`Subtitle 1 size: ${self.savedSettings.subtitle1FontSize.toFixed(1)}`);
+                                if (e.shiftKey) {
+                                    self.savedSettings.subtitle2FontSize = Math.min(3.0, self.savedSettings.subtitle2FontSize + 0.1);
+                                    self.notify(`Subtitle 2 size: ${self.savedSettings.subtitle2FontSize.toFixed(1)}`);
+                                } else {
+                                    self.savedSettings.subtitle1FontSize = Math.min(3.0, self.savedSettings.subtitle1FontSize + 0.1);
+                                    self.notify(`Subtitle 1 size: ${self.savedSettings.subtitle1FontSize.toFixed(1)}`);
+                                }
                             }
                             break;
                         case '-':
@@ -1873,6 +1927,13 @@ function createApp() {
                             self.savedSettings.subtitle1FontSize = Math.min(self.savedSettings.subtitle1FontSize + 0.15, 3.0);
                             self.savedSettings.subtitle2FontSize = Math.min(self.savedSettings.subtitle2FontSize + 0.15, 3.0);
                             self.notify(`Font sizes increased: ${self.savedSettings.subtitle1FontSize.toFixed(1)}/${self.savedSettings.subtitle2FontSize.toFixed(1)}`);
+                            break;
+                        case 'l':
+                        case 'L':
+                            if (eitherNG) return;
+                            stopEvent(e);
+                            self.isMaxLinesMode = !self.isMaxLinesMode;
+                            self.notify(`Max caption lines: ${self.isMaxLinesMode ? 'Unlimited' : self.maxCaptionLines}`);
                             break;
                         case 'z':
                         case 'Z':
@@ -1961,35 +2022,28 @@ function createApp() {
                 });
 
             },
-
-            calcAppStyle: function () {
-                return this.calcGridTemplateAreas() + this.calcGridTemplateColumns() + this.calcTextShadowStyle() + this.calcFontWeightStyle();
-            },
             
-            calcTextShadowStyle: function() {
-                const size = this.savedSettings.textShadowSize || 3;
-                let shadows = [];
+            generateTextShadow: function(size) {
+                if (!size || size <= 0) return 'none';
+                const s = parseInt(size, 10);
+                if (isNaN(s) || s <= 0) return 'none';
                 
-                // Generate multiple layers of shadow for better visibility
-                for (let i = 1; i <= size; i++) {
-                    // Add shadows in all directions
+                let shadows = [];
+                for (let i = 1; i <= s; i++) {
                     shadows.push(`${-i}px ${-i}px 0 black`);
                     shadows.push(`${i}px ${-i}px 0 black`);
                     shadows.push(`${-i}px ${i}px 0 black`);
                     shadows.push(`${i}px ${i}px 0 black`);
-                    // Add cardinal directions
                     shadows.push(`${-i}px 0 0 black`);
                     shadows.push(`${i}px 0 0 black`);
                     shadows.push(`0 ${-i}px 0 black`);
                     shadows.push(`0 ${i}px 0 black`);
                 }
-                
-                return `--text-shadow: ${shadows.join(', ')};`;
+                return shadows.join(', ');
             },
-            
-            calcFontWeightStyle: function() {
-                const weight = this.savedSettings.fontWeight || 400;
-                return `--font-weight: ${weight};`;
+
+            calcAppStyle: function () {
+                return this.calcGridTemplateAreas() + this.calcGridTemplateColumns();
             },
 
             calcGridTemplateAreas: function () {
@@ -2181,15 +2235,10 @@ function createApp() {
             },
 
             onVideoSeek: function (e) {
-                console.log('[DEBUG] onVideoSeek - called');
                 this.currentTime = this.getCurrentTime();
-                console.log('[DEBUG] onVideoSeek - currentTime:', this.currentTime);
-                
-                // Update captions immediately and schedule another update after a short delay
                 this.updateActiveCaptions();
                 setTimeout(this.updateActiveCaptions.bind(this), 50);
                 
-                // Ensure video element keeps focus
                 var videoElement = this.getVideoElement();
                 if (videoElement) {
                     setTimeout(function() {
@@ -2199,17 +2248,21 @@ function createApp() {
             },
             
             updateActiveCaptions: function() {
-                console.log('[DEBUG] updateActiveCaptions - called');
-                var track = this.getTrack();
-                if (!track || !track.activeCues) {
+                if (!this.activeCaptionSource || !this.captions[this.activeCaptionSource]) {
                     this.activeCaptionIds = [];
                     return;
                 }
-                var newIds = [];
-                for (var i = 0; i < track.activeCues.length; i++) {
-                    newIds.push(track.activeCues[i].id);
-                }
-                this.activeCaptionIds = newIds;
+
+                var time = this.currentTime;
+                var activeIds = this.captions[this.activeCaptionSource]
+                    .filter(function(caption) {
+                        return caption.startTime <= time && time <= caption.endTime;
+                    })
+                    .map(function(caption) {
+                        return caption.id;
+                    });
+                
+                this.activeCaptionIds = activeIds;
             },
 
             getVideoElement: function () {
@@ -2217,54 +2270,43 @@ function createApp() {
             },
 
             onTimeUpdate: function () {
+                var oldActiveCaptionIds = this.activeCaptionIds.slice();
                 this.currentTime = this.getCurrentTime();
-                console.log('[DEBUG] onTimeUpdate - currentTime:', this.currentTime);
-                
-                // Use our updateActiveCaptions method to handle caption updates
                 this.updateActiveCaptions();
-                
-                // Debug active captions
-                console.log('[DEBUG] onTimeUpdate - activeCaptions:', this.activeCaptions ? this.activeCaptions.length : 'null');
-                if (this.activeCaptions && this.activeCaptions.length > 0) {
-                    console.log('[DEBUG] onTimeUpdate - First activeCaption text:', this.activeCaptions[0].text);
+                var newActiveCaptionIds = this.activeCaptionIds;
+
+                var oldIdsSet = new Set(oldActiveCaptionIds);
+                var newIdsSet = new Set(newActiveCaptionIds);
+
+                if (oldActiveCaptionIds.length !== newActiveCaptionIds.length || !oldActiveCaptionIds.every(id => newIdsSet.has(id))) {
+                    var removedCaptionIds = oldActiveCaptionIds.filter(id => !newIdsSet.has(id));
+                    this.handleAutoPauseCaptionUpdate(removedCaptionIds);
                 }
+
+                console.log('[DEBUG] onTimeUpdate - activeCaptions:', this.activeCaptions ? this.activeCaptions.length : 'null');
             },
 
             getCurrentTime: function () {
-                console.log('[DEBUG] getCurrentTime - called');
                 var videoElement = this.getVideoElement();
                 if (!videoElement) return 0;
-                // Apply subtitle delay if set
                 return videoElement.currentTime + (this.savedSettings.subtitleDelay || 0);
             },
 
             getTotalDuration: function () {
-                console.log('[DEBUG] getTotalDuration - called');
                 var videoElement = this.getVideoElement();
                 return videoElement ? videoElement.duration : 0;
             },
 
             setCurrentTime: function (time, shouldPlay) {
-                console.log('[DEBUG] setCurrentTime - time:', time, 'shouldPlay:', shouldPlay);
                 try {
                     var videoElement = this.getVideoElement();
                     if (videoElement) {
-                        // Remove subtitle delay when setting time
                         var videoTime = time - (this.savedSettings.subtitleDelay || 0);
-                        // Update our internal time tracking
                         this.currentTime = time;
-                        console.log('[DEBUG] setCurrentTime - Updated internal currentTime:', this.currentTime);
-                        
-                        // Update the actual video element
                         videoElement.currentTime = videoTime;
-                        console.log('[DEBUG] setCurrentTime - Set video currentTime to:', videoTime);
                         
-                        // Handle play/pause
                         if (shouldPlay) {
                             videoElement.play().catch(error => {
-                                console.warn('Error during play after seeking:', error);
-                                // If we get an AbortError, it's usually because we're seeking too rapidly
-                                // We can safely ignore this as it's a normal part of seeking
                                 if (error.name !== 'AbortError') {
                                     console.error('Unexpected error during play:', error);
                                 }
@@ -2307,12 +2349,10 @@ function createApp() {
                     video.play();
                     this.isPlaying = true;
                     
-                    // Clear any existing interval
                     if (this.autoSaveInterval) {
                         clearInterval(this.autoSaveInterval);
                     }
                     
-                    // Set up auto-save every 2 seconds
                     this.autoSaveInterval = setInterval(() => {
                         this.saveProgress();
                     }, 2000);
@@ -2325,45 +2365,29 @@ function createApp() {
             play: function() {
                 var video = this.getVideoElement();
                 if (video) {
-                    // Clear any existing interval
                     if (this.autoSaveInterval) {
                         clearInterval(this.autoSaveInterval);
                     }
                     
-                    // Start playback
                     const playPromise = video.play();
                     
                     if (playPromise !== undefined) {
                         playPromise.then(_ => {
-                            // Playback started successfully
                             this.isPlaying = true;
-                            console.log('[DEBUG] play - Video playback started');
-                            
-                            // Set up auto-save every 2 seconds
                             this.autoSaveInterval = setInterval(() => {
-                                console.log('[DEBUG] Auto-save interval triggered');
                                 this.saveProgress();
                             }, 2000);
-                            
-                            // Initial save
                             this.saveProgress();
                         })
                         .catch(error => {
                             console.error('[ERROR] play - Playback failed:', error);
-                            video.controls = true; // Show controls if autoplay was prevented
+                            video.controls = true;
                         });
                     } else {
-                        // For older browsers that don't return a promise
                         this.isPlaying = true;
-                        console.log('[DEBUG] play - Video playback started (legacy)');
-                        
-                        // Set up auto-save every 2 seconds
                         this.autoSaveInterval = setInterval(() => {
-                            console.log('[DEBUG] Auto-save interval triggered (legacy)');
                             this.saveProgress();
                         }, 2000);
-                        
-                        // Initial save
                         this.saveProgress();
                     }
                 }
@@ -2391,7 +2415,6 @@ function createApp() {
                     
                 var self = this;
                 return ids.map(function(id) {
-                    // Look for the caption in all loaded sources
                     for (var sourceId in self.captions) {
                         var sourceCaptions = self.captions[sourceId];
                         for (var i = 0; i < sourceCaptions.length; i++) {
@@ -2409,20 +2432,15 @@ function createApp() {
             getSourceName: function(sourceId) {
                 if (!sourceId) return 'Unknown';
                 
-                // If the source ID is a filename, extract a readable name from it
                 if (sourceId.includes('.')) {
-                    // Remove file extension
                     var name = sourceId.split('.').slice(0, -1).join('.');
-                    // Replace underscores and hyphens with spaces
                     name = name.replace(/[_-]/g, ' ');
-                    // Capitalize first letter of each word
                     name = name.split(' ').map(function(word) {
                         return word.charAt(0).toUpperCase() + word.slice(1);
                     }).join(' ');
                     return name;
                 }
                 
-                // For auto-generated IDs, provide a generic name
                 if (sourceId.startsWith('subtitle_')) {
                     return 'Subtitle ' + (this.captionSources.indexOf(sourceId) + 1);
                 }
@@ -2446,38 +2464,62 @@ function createApp() {
                 this.setCurrentTime(caption.startTime + 0.0001, true);
                 this.activeCaptionIds = [caption.id];
             },
+            seek: function (seconds) {
+                var videoElement = this.getVideoElement();
+                if (!videoElement) return;
+                var newTime = videoElement.currentTime + seconds;
+                videoElement.currentTime = Math.max(0, Math.min(newTime, videoElement.duration));
+            },
             replayCaption: function() {
-                const currentCaption = this.getCurrentCaption(this.currentTime);
-                if (!currentCaption) return;
+                const captions = this.activeCaptions;
+                if (captions && captions.length > 0) {
+                    this.playCaption(captions[0]);
+                    return;
+                }
+                const source = this.activeCaptionSource;
+                if (!source || !this.captions[source] || this.captions[source].length === 0) return;
                 
-                this.playCaption(currentCaption);
+                const time = this.currentTime;
+                const pastCaptions = this.captions[source].filter(c => c.endTime < time);
+                if (pastCaptions.length > 0) {
+                    const lastCaption = pastCaptions[pastCaptions.length - 1];
+                    if (time - lastCaption.endTime < 3) {
+                         this.playCaption(lastCaption);
+                    }
+                }
             },
             previousCaption: function (e) {
                 this.moveCaptionsBy(-1);
             },
-
             nextCaption: function (e) {
                 this.moveCaptionsBy(1);
             },
-
             moveCaptionsBy: function(numCaptions) {
-                if (!this.captions || numCaptions === 0) return;
-                
-                const currentCaption = this.getCurrentCaption(this.currentTime);
-                if (!currentCaption) {
-                    this.shiftVideoTime(numCaptions);
+                const source = this.activeCaptionSource;
+                if (!source || !this.captions[source] || this.captions[source].length === 0) {
+                    this.seek(numCaptions > 0 ? 3 : -3);
                     return;
                 }
-                
-                const targetCaption = this.findNeighboringCaptionByOffset(currentCaption, numCaptions);
-                
-                if (!targetCaption || this.tooFarAway(this.currentTime, targetCaption, numCaptions)) {
-                    this.shiftVideoTime(numCaptions);
-                } else {
+            
+                const captions = this.captions[source];
+                const time = this.currentTime;
+                let targetCaption = null;
+            
+                if (numCaptions > 0) { // 'next'
+                    targetCaption = captions.find(c => c.startTime > time + 0.1);
+                } else { // 'previous'
+                    const candidates = captions.filter(c => c.startTime < time - 0.1);
+                    if (candidates.length > 0) {
+                        targetCaption = candidates[candidates.length - 1];
+                    }
+                }
+            
+                if (targetCaption) {
                     this.playCaption(targetCaption);
+                } else {
+                    this.seek(numCaptions > 0 ? 3 : -3);
                 }
             },
-
             getCurrentCaption: function(time) {
                 for (let caption of this.activeCaptions) {
                     if (caption.startTime <= time && time <= caption.endTime) {
@@ -2529,7 +2571,7 @@ function createApp() {
                     return self.findNeighboringCaptionByOffset(current, isPositive ? 1 : -1);
                 };
                 var containsNextTime = function (caption) {
-                    return caption.startTime < nextTime && nextTime < caption.endTime;
+                    return caption.startTime < nextTime && nextTime <= caption.endTime;
                 };
                 var next = getNext();
                 var maxToScan = 100;
@@ -2706,20 +2748,7 @@ function createApp() {
                 }
             },
 
-            onCaptionsLoad: function (e) {
-                this.updateActiveCaptions();
-            },
-
-            onCaptionsCueChange: function (e) {
-                this.updateActiveCaptions();
-                this.handleAutoPauseCaptionUpdate(this.activeCaptionIds);
-            },
-
-            handleAutoPauseCaptionUpdate: function (newCaptionIds) {
-                if (newCaptionIds.length === 0)
-                    return;
-                var removedCaptionIds = this.activeCaptionIds.filter(function (id) { return newCaptionIds.indexOf(id) === -1; });
-                var removedCaptions = this.idsToCaptions(removedCaptionIds);
+            handleAutoPauseCaptionUpdate: function (removedCaptionIds) {
                 this.handleAutoPause(this.getCurrentTime(), removedCaptionIds);
             },
 
@@ -3071,12 +3100,9 @@ function createApp() {
             },
             ruby: function (arr, sourceId, index) {
                 if (!sourceId || !this.captions[sourceId] || !this.captions[sourceId][index]) {
-                    console.warn('Invalid source or index for ruby function');
                     return;
                 }
                 if(!arr || !arr.length) {
-                    console.warn('Invalid furigana array for ruby function');
-                    // If no furigana data but text exists, handle it appropriately
                     const text = this.captions[sourceId][index].text;
                     if (text && !text.includes("<p>") && !isJapanese(text)) {
                         this.captions[sourceId][index].text = `<p>${text}</p>`;
@@ -3085,120 +3111,82 @@ function createApp() {
                 }
                 
                 if(this.captions[sourceId][index].text.includes("<ruby")) {
-                    console.warn('Caption already contains ruby tags');
                     return;
                 }
                 
-                const originalText = this.captions[sourceId][index].text;
-                this.captions[sourceId][index].text = "";
-                console.log('[DEBUG] ruby - Processing furigana for caption', index, 'in source', sourceId);
-
-                let hasJapanese = false;
-                let hasNonJapanese = false;
                 let processedText = "";
                 
-                // First pass: check if we have mixed content
-                for (let t of arr) {
-                    const text = typeof t === "object" ? t[0] : t;
-                    if (isJapanese(text)) {
-                        hasJapanese = true;
-                    } else if (text.trim().length > 0) {
-                        hasNonJapanese = true;
-                    }
-                }
-                
-                // Process each token
                 for (let t of arr) {
                     try {
-                        let kj = typeof t === "object" ? t[0] : t;
-                        let kn = typeof t === "object" ? t[1] : "";
-                        kn = kj === kn ? "" : kn;
-                        
-                        // Handle non-Japanese text
+                        let kj, kn, token;
+                        if (Array.isArray(t)) {
+                            kj = t[0]; kn = t[1]; token = t[2];
+                        } else {
+                            kj = String(t); kn = ""; token = null;
+                        }
+                        if (!kj) continue;
+                        kn = (kj === kn) ? "" : kn;
+
                         if (!isJapanese(kj)) {
                             processedText += kj;
                             continue;
                         }
                         
-                        // Process Japanese text with furigana
+                        let wordType = getWordType(token, kj);
+                        
                         let kja = kj.split('');
                         let kna = kn.split('');
-                        let ka = [];
-                        
-                        // Process common characters at the end
-                        let j = 0;
-                        for (let i = 1; i <= Math.min(kja.length, kna.length); i++) {
-                            const k = kja[kja.length - i];
-                            const n = kna[kna.length - i + j];
-                            
-                            if (k === n) {
-                                let e = kja.splice(kja.length - i, 1)[0];
-                                kna.splice(kna.length - i + j, 1);
-                                i -= 1;
-                                ka.unshift(e);
-                            } else {
-                                break;
-                            }
+                        let okurigana = [];
+                        while (kja.length > 0 && kna.length > 0 && kja[kja.length - 1] === kna[kna.length - 1]) {
+                            okurigana.unshift(kja.pop());
+                            kna.pop();
                         }
-                        
-                        // Create ruby for Japanese text
-                        if (kna.length > 0) {
-                            let wordType = getWordType(kja.join(''), kna.join(''));
-                            const color = colorMap[wordType] || colorMap.default;
-                            processedText += `<ruby style="color:${color}">${kja.join('')}<rt>${kna.join('')}</rt></ruby>${ka.join('')}`;
+                        const rubyBase = kja.join('');
+                        const rubyText = kna.join('');
+                        const okuriganaStr = okurigana.join('');
+
+                        const colorStyle = (wordType !== 'default' && colorMap[wordType]) ? ` style="color:${colorMap[wordType]}"` : '';
+
+                        if (rubyText && rubyBase) {
+                            processedText += `<ruby${colorStyle}>${rubyBase}<rt>${rubyText}</rt></ruby>${okuriganaStr}`;
                         } else {
-                            processedText += kja.join('') + ka.join('');
+                            const word = rubyBase + okuriganaStr;
+                            processedText += colorStyle ? `<span${colorStyle}>${word}</span>` : word;
                         }
                     } catch (e) {
-                        console.error('Error processing furigana:', e);
-                        // Fallback: just add the original text
-                        const text = typeof t === 'object' ? t[0] : t;
-                        //if (isJapanese(text)) {
+                        console.error('Error processing furigana token:', t, e);
+                        const text = Array.isArray(t) ? t[0] : String(t);
                         processedText += text;
-                        //} else {
-                        //    processedText += `<p>${text}</p>`;
-                        //}
                     }
                 }
                 
-                // Set the final processed text
                 this.captions[sourceId][index].text = processedText;
-                console.log('[DEBUG] ruby - Processed caption:', processedText);
             },
             furigana: async function (sourceId, limit = 50) {
                 try {
-                    // Use active source if not specified
                     if (!sourceId && this.activeCaptionSource) {
                         sourceId = this.activeCaptionSource;
                     }
                     
-                    // Validate source exists
                     if (!sourceId || !this.captions || !this.captions[sourceId]) {
-                        console.warn('No valid caption source for furigana:', sourceId);
                         return;
                     }
                     
-                    console.log('Processing furigana for source:', sourceId, 'with limit:', limit);
-                    
-                    // Initialize tokenizer
                     tokenizer = await initializeTokenizer();
                     const promises = [];
                     const captionsArray = this.captions[sourceId];
                     
                     if (!Array.isArray(captionsArray)) {
-                        console.error('Captions are not in expected array format:', captionsArray);
                         return;
                     }
                     
                     for (let i = 0; i < captionsArray.length; i++) {
                         try {
                             if (!captionsArray[i] || !captionsArray[i].text) {
-                                console.warn('Invalid caption at index', i);
                                 continue;
                             }
                             
                             const text = captionsArray[i].text;
-                            console.log('Processing caption', i, 'with text:', text);
                             
                             const promise = makeFurigana(text)
                                 .then((arr) => {
