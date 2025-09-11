@@ -20,6 +20,183 @@ var analyze;
 var wn = console.warn;
 var subtitlesFileContent;
 
+const parseWatchHistoryData = (savedSettings) => {
+  const settings = JSON.parse(savedSettings);
+  const watchHistory = settings.watchedHistory;
+  
+  // Extract series info from filename
+  const extractSeriesInfo = (filename) => {
+    // Remove URL encoding
+    const decoded = decodeURIComponent(filename);
+    
+    // Extract series name and episode
+    const patterns = [
+      /\[.*?\]\s*(.+?)\s*-\s*S?(\d+)E?(\d+)/i,  // [Group] Series - S01E01
+      /\[.*?\]\s*(.+?)\s*-\s*(\d+)/i,           // [Group] Series - 01
+      /(.+?)\s*S(\d+)E(\d+)/i,                  // Series S01E01
+      /(.+?)\s*-\s*Episode\s*(\d+)/i,           // Series - Episode 01
+      /(.+?)\.S(\d+)E(\d+)/i                    // Series.S01E01
+    ];
+    
+    for (let pattern of patterns) {
+      const match = decoded.match(pattern);
+      if (match) {
+        let series = match[1].trim();
+        let season = match[2] || '1';
+        let episode = match[3] || match[2];
+        
+        // Clean up series name
+        series = series.replace(/\[.*?\]/g, '').trim();
+        series = series.replace(/\s+(BD|WEB|1080p|720p|480p).*$/i, '').trim();
+        
+        return {
+          series: series,
+          season: parseInt(season),
+          episode: parseInt(episode),
+          filename: decoded
+        };
+      }
+    }
+    
+    // Fallback for weird formats
+    const fallback = decoded.replace(/\[.*?\]/g, '').trim().split(/[-.]/)[0];
+    return {
+      series: fallback,
+      season: 1,
+      episode: 1,
+      filename: decoded
+    };
+  };
+  
+  // Group episodes by series
+  const seriesMap = new Map();
+  
+  Object.entries(watchHistory).forEach(([filename, data]) => {
+    const info = extractSeriesInfo(filename);
+    const key = info.series;
+    
+    if (!seriesMap.has(key)) {
+      seriesMap.set(key, {
+        title: key,
+        episodes: [],
+        totalEpisodes: 0,
+        completedEpisodes: 0
+      });
+    }
+    
+    const isCompleted = Math.abs(data.timestamp - data.duration) < 30;
+    const completionRate = (data.timestamp / data.duration * 100).toFixed(1);
+    
+    seriesMap.get(key).episodes.push({
+      season: info.season,
+      episode: info.episode,
+      timestamp: data.timestamp,
+      duration: data.duration,
+      completed: isCompleted,
+      completionRate: parseFloat(completionRate),
+      watchedDate: new Date(data.date),
+      filename: info.filename
+    });
+    
+    seriesMap.get(key).totalEpisodes++;
+    if (isCompleted) seriesMap.get(key).completedEpisodes++;
+  });
+  
+  // Sort episodes and generate HTML
+  const generateHTML = () => {
+    let html = `
+    <div class="anime-dashboard">
+      <style>
+        .anime-dashboard { font-family: 'Segoe UI', sans-serif; max-width: 1200px; margin: 0 auto; }
+        .series-card { background: #1a1a1a; border-radius: 8px; margin: 16px 0; padding: 20px; border-left: 4px solid #00d4ff; }
+        .series-title { color: #00d4ff; font-size: 1.4em; font-weight: bold; margin-bottom: 12px; }
+        .series-stats { color: #888; margin-bottom: 16px; font-size: 0.9em; }
+        .episode-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+        .episode-card { background: #2a2a2a; border-radius: 6px; padding: 12px; border-left: 3px solid var(--status-color); }
+        .episode-card.completed { --status-color: #4caf50; }
+        .episode-card.partial { --status-color: #ff9800; }
+        .episode-card.barely-started { --status-color: #f44336; }
+        .episode-title { color: #fff; font-weight: 500; margin-bottom: 8px; }
+        .episode-progress { font-size: 0.85em; margin-bottom: 4px; }
+        .progress-bar { width: 100%; height: 4px; background: #444; border-radius: 2px; overflow: hidden; }
+        .progress-fill { height: 100%; background: var(--status-color); transition: width 0.3s; }
+        .episode-date { color: #666; font-size: 0.8em; }
+        .completion-badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 0.75em; font-weight: bold; }
+        .completed-badge { background: #4caf50; color: white; }
+        .partial-badge { background: #ff9800; color: white; }
+        .dropped-badge { background: #f44336; color: white; }
+      </style>
+    `;
+    
+    Array.from(seriesMap.entries())
+      .sort(([,a], [,b]) => b.episodes[0].watchedDate - a.episodes[0].watchedDate)
+      .forEach(([seriesName, data]) => {
+        const completionPercentage = ((data.completedEpisodes / data.totalEpisodes) * 100).toFixed(0);
+        
+        html += `
+        <div class="series-card">
+          <div class="series-title">${seriesName}</div>
+          <div class="series-stats">
+            📺 ${data.totalEpisodes} episodes • 
+            ✅ ${data.completedEpisodes} completed (${completionPercentage}%) • 
+            🕒 Last watched: ${data.episodes[0].watchedDate.toLocaleDateString()}
+          </div>
+          <div class="episode-grid">
+        `;
+        
+        data.episodes
+          .sort((a, b) => a.episode - b.episode)
+          .forEach(ep => {
+            let statusClass, badge;
+            if (ep.completed) {
+              statusClass = 'completed';
+              badge = '<span class="completion-badge completed-badge">✅ Done</span>';
+            } else if (ep.completionRate > 50) {
+              statusClass = 'partial';
+              badge = '<span class="completion-badge partial-badge">⏸️ Paused</span>';
+            } else {
+              statusClass = 'barely-started';
+              badge = '<span class="completion-badge dropped-badge">😴 Dropped</span>';
+            }
+            
+            html += `
+            <div class="episode-card ${statusClass}">
+              <div class="episode-title">S${ep.season}E${String(ep.episode).padStart(2, '0')}</div>
+              <div class="episode-progress">
+                ${Math.floor(ep.timestamp / 60)}:${String(Math.floor(ep.timestamp % 60)).padStart(2, '0')} / 
+                ${Math.floor(ep.duration / 60)}:${String(Math.floor(ep.duration % 60)).padStart(2, '0')} 
+                (${ep.completionRate}%)
+              </div>
+              <div class="progress-bar">
+                <div class="progress-fill" style="width: ${ep.completionRate}%"></div>
+              </div>
+              <div class="episode-date">
+                ${badge} • ${ep.watchedDate.toLocaleDateString()}
+              </div>
+            </div>
+            `;
+          });
+        
+        html += `
+          </div>
+        </div>
+        `;
+      });
+    
+    html += '</div>';
+    return html;
+  };
+  
+  return {
+    series: Array.from(seriesMap.entries()).map(([name, data]) => ({
+      name,
+      ...data,
+      episodes: data.episodes.sort((a, b) => a.episode - b.episode)
+    })),
+    html: generateHTML()
+  };
+};
+
 function toggleControls() {
   const video = document.getElementById("ab-video-element");
   const styleId = "hide-video-controls";
@@ -514,7 +691,7 @@ Vue.component("video-list", {
                @dragleave.prevent="onDragLeave"
                @drop.prevent="onDrop"
                :class="{ 'drag-over': isDragging }">
-            <div class="flex justify-between items-center mb-4">
+            <div class="flex justify-between items-center mb-4" style="width: 100%;">
               <div class="flex items-center gap-2">
                 <h2 class="text-xl font-semibold">Videos</h2>
                 <div v-if="currentPath.length" class="text-sm text-gray-400">
@@ -559,6 +736,10 @@ Vue.component("video-list", {
                 🎬 {{ v.name }}<br><small>{{ formatSize(v.size) }} • {{ formatDate(v.lastModified) }}</small>
               </div>
             </div>
+            <div class="border border-blue-400 p-2 rounded" id="watchhistory"></div>
+              <div class="border border-gray-400 p-2 rounded">
+                <input type="file" multiple @change="onFileChange" accept="video/*">
+              </div>
             <div v-if="videos.length" class="fixed bottom-0 left-0 right-0 p-4 bg-gray-900 border-t border-gray-800 flex justify-center items-center gap-4">
               <small class="text-gray-400">{{ selectedCount ? selectedCount + ' selected' : 'No selection' }}</small>
               <button class="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700" 
@@ -597,6 +778,9 @@ Vue.component("video-list", {
       e.preventDefault();
       e.stopPropagation();
       this.isDragging = false;
+    },
+    onFileChange(file) {
+      this.$emit("select", file)
     },
 
     async onDrop(e) {
@@ -790,6 +974,10 @@ Vue.component("video-list", {
   mounted() {
     console.log("mounted videoList");
     this.loadVideos();
+    const result = parseWatchHistoryData(localStorage.getItem("savedSettings"));
+    let wh = document.querySelector("#watchhistory");
+    if (wh) wh.innerHTML = result.html;
+    document.body.style.width = "100% !important"
   },
 });
 
@@ -1019,9 +1207,9 @@ function createApp() {
         subtitle1FontSize: 1.0,
         subtitle2FontSize: 1.0,
         subtitle1FontWeight: 600,
-        subtitle2FontWeight: 400,
-        subtitle1TextShadowSize: 5,
-        subtitle2TextShadowSize: 5,
+        subtitle2FontWeight: 600,
+        subtitle1TextShadowSize: 6,
+        subtitle2TextShadowSize: 6,
         subtitleVerticalPosition: 5,
         subtitleDelay: 0.0, // in seconds
         showSubtitle1: true,
