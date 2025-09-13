@@ -42,8 +42,16 @@ const parseWatchHistoryData = (savedSettings) => {
       const match = decoded.match(pattern);
       if (match) {
         let series = match[1].trim();
-        let season = match[2] || '1';
-        let episode = match[3] || match[2];
+        let season, episode;
+        
+        // If match[3] is present, we have a season and episode. Otherwise, it's just an episode.
+        if (match[3]) {
+          season = match[2];
+          episode = match[3];
+        } else {
+          season = '1';
+          episode = match[2];
+        }
         
         // Clean up series name
         series = series.replace(/\[.*?\]/g, '').trim();
@@ -1331,8 +1339,8 @@ function createApp() {
         var self = this;
         var result = [];
 
-        var maxBuffer = 0.1; // 0.3s
-        var bufferRate = 0.002; // 30 char = 0.15s
+        var maxBuffer = 0.007; // 0.3s
+        var bufferRate = 0.0005; // 30 char = 0.15s
 
         var isActiveAtTime = function (caption) {
           var smartBuffer = Math.min(
@@ -1636,8 +1644,8 @@ function createApp() {
       cleanSubtitleText: function (text) {
         if (!text) return "";
 
-        // Don't mess with ruby/rt tags at all - they're critical for Japanese
-        text = text.replace(/<(?!\/?(?:ruby|rt|rp))[^>]*>/g, "");
+        // Don't mess with ruby/rt tags, and also preserve span for coloring
+        text = text.replace(/<(?!\/?(?:ruby|rt|rp|span))[^>]*>/g, "");
 
         // Only clean up basic HTML entities and whitespace
         return text
@@ -3028,6 +3036,15 @@ function createApp() {
         this.setCurrentTime(caption.startTime + 0.0001, true);
         this.activeCaptionIds = [caption.id];
       },
+      goToCaptionStart: function (caption) {
+        if (!caption) return;
+        var video = this.getVideoElement();
+        if (video) {
+            this.setCurrentTime(caption.startTime + 0.0001, !video.paused);
+            this.activeCaptionIds = [caption.id];
+            this.clearAutoPauseCaptions();
+        }
+      },
       seek: function (seconds) {
         var videoElement = this.getVideoElement();
         if (!videoElement) return;
@@ -3040,7 +3057,7 @@ function createApp() {
       replayCaption: function () {
         const captions = this.activeCaptions;
         if (captions && captions.length > 0) {
-          this.playCaption(captions[0]);
+          this.goToCaptionStart(captions[0]);
           return;
         }
         const source = this.activeCaptionSource;
@@ -3058,7 +3075,7 @@ function createApp() {
         if (pastCaptions.length > 0) {
           const lastCaption = pastCaptions[pastCaptions.length - 1];
           if (time - lastCaption.endTime < 3) {
-            this.playCaption(lastCaption);
+            this.goToCaptionStart(lastCaption);
           }
         }
       },
@@ -3095,7 +3112,7 @@ function createApp() {
         }
 
         if (targetCaption) {
-          this.playCaption(targetCaption);
+          this.goToCaptionStart(targetCaption);
         } else {
           this.seek(numCaptions > 0 ? 3 : -3);
         }
@@ -3457,7 +3474,7 @@ function createApp() {
       scrollToCaption: function (captionId) {
         var el = this.$el.querySelector("#" + captionId);
         if (el.scrollIntoViewIfNeeded) el.scrollIntoViewIfNeeded(true);
-        else el.scrollIntoView({ behavior: "smooth", block: "center" });
+        else el.scrollIntoView({ behavior: "smooth", block: "nearest" });
       },
 
       isCaptions: function (file) {
