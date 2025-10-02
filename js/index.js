@@ -19,70 +19,77 @@ var aDict;
 var analyze;
 var wn = console.warn;
 var subtitlesFileContent;
-
 const parseWatchHistoryData = (savedSettings) => {
   const settings = JSON.parse(savedSettings);
   const watchHistory = settings.watchedHistory;
-  
-  // Extract series info from filename
+
   const extractSeriesInfo = (filename) => {
-    // Remove URL encoding
     const decoded = decodeURIComponent(filename);
-    
-    // Extract series name and episode
+
     const patterns = [
-      /\[.*?\]\s*(.+?)\s*-\s*S?(\d+)E?(\d+)/i,  // [Group] Series - S01E01
-      /\[.*?\]\s*(.+?)\s*-\s*(\d+)/i,           // [Group] Series - 01
-      /(.+?)\s*S(\d+)E(\d+)/i,                  // Series S01E01
-      /(.+?)\s*-\s*Episode\s*(\d+)/i,           // Series - Episode 01
-      /(.+?)\.S(\d+)E(\d+)/i                    // Series.S01E01
+      // Handle explicit season/episode formats first (most specific)
+      /\[.*?\]\s*(.+?)\s*-\s*S(\d+)E(\d+)/i,           // [Group] Series - S01E01
+      /(.+?)\s*S(\d+)E(\d+)/i,                         // Series S01E01
+      /(.+?)\.S(\d+)E(\d+)/i,                          // Series.S01E01
+      
+      // Handle season with episode number
+      /\[.*?\]\s*(.+?)\s*S(\d+)\s*-\s*(\d+)/i,        // [Group] Series S4 - 13
+      /(.+?)\s*S(\d+)\s*-\s*(\d+)/i,                   // Series S4 - 13
+      
+      // Handle simple episode formats (less specific)
+      /\[.*?\]\s*(.+?)\s*-\s*(?:Episode\s*)?(\d+)/i,   // [Group] Series - Episode 01 or [Group] Series - 01
+      /(.+?)\s*-\s*Episode\s*(\d+)/i,                  // Series - Episode 01
+      /(.+?)\s*-\s*(\d+)/i,                            // Series - 01
     ];
-    
+
     for (let pattern of patterns) {
       const match = decoded.match(pattern);
       if (match) {
         let series = match[1].trim();
         let season, episode;
-        
-        // If match[3] is present, we have a season and episode. Otherwise, it's just an episode.
-        if (match[3]) {
-          season = match[2];
-          episode = match[3];
-        } else {
-          season = '1';
-          episode = match[2];
-        }
-        
-        // Clean up series name
+
+        // Clean up series name early
         series = series.replace(/\[.*?\]/g, '').trim();
         series = series.replace(/\s+(BD|WEB|1080p|720p|480p).*$/i, '').trim();
-        
+
+        if (match[3]) {
+          // We have season and episode
+          season = parseInt(match[2]);
+          episode = parseInt(match[3]);
+        } else {
+          // Just episode, assume season 1
+          season = 1;
+          episode = parseInt(match[2]);
+        }
+
         return {
           series: series,
-          season: parseInt(season),
-          episode: parseInt(episode),
+          season: season,
+          episode: episode,
           filename: decoded
         };
       }
     }
+
+    // Fallback - try to extract any number as episode
+    const numberMatch = decoded.match(/(\d+)/);
+    const fallbackSeries = decoded.replace(/\[.*?\]/g, '').trim().split(/[-.]/)[0];
     
-    // Fallback for weird formats
-    const fallback = decoded.replace(/\[.*?\]/g, '').trim().split(/[-.]/)[0];
     return {
-      series: fallback,
+      series: fallbackSeries,
       season: 1,
-      episode: 1,
+      episode: numberMatch ? parseInt(numberMatch[1]) : 1,
       filename: decoded
     };
   };
-  
-  // Group episodes by series
+
+  // Fix your completion logic too - it's more broken than a dropped phone
   const seriesMap = new Map();
-  
+
   Object.entries(watchHistory).forEach(([filename, data]) => {
     const info = extractSeriesInfo(filename);
     const key = info.series;
-    
+
     if (!seriesMap.has(key)) {
       seriesMap.set(key, {
         title: key,
@@ -91,21 +98,22 @@ const parseWatchHistoryData = (savedSettings) => {
         completedEpisodes: 0
       });
     }
-    
-    const isCompleted = Math.abs(data.timestamp - data.duration) < 30;
-    const completionRate = (data.timestamp / data.duration * 100).toFixed(1);
-    
+
+    // Better completion logic - not autism-tier strict
+    const completionPercent = (data.timestamp / data.duration) * 100;
+    const isCompleted = completionPercent >= 90 || (Math.abs(data.timestamp - data.duration) < 60);
+
     seriesMap.get(key).episodes.push({
       season: info.season,
       episode: info.episode,
       timestamp: data.timestamp,
       duration: data.duration,
       completed: isCompleted,
-      completionRate: parseFloat(completionRate),
+      completionRate: parseFloat(completionPercent.toFixed(1)),
       watchedDate: new Date(data.date),
       filename: info.filename
     });
-    
+
     seriesMap.get(key).totalEpisodes++;
     if (isCompleted) seriesMap.get(key).completedEpisodes++;
   });
@@ -195,11 +203,16 @@ const parseWatchHistoryData = (savedSettings) => {
     return html;
   };
   
+
   return {
     series: Array.from(seriesMap.entries()).map(([name, data]) => ({
       name,
       ...data,
-      episodes: data.episodes.sort((a, b) => a.episode - b.episode)
+      episodes: data.episodes.sort((a, b) => {
+        // Sort by season first, then episode
+        if (a.season !== b.season) return a.season - b.season;
+        return a.episode - b.episode;
+      })
     })),
     html: generateHTML()
   };
@@ -1327,6 +1340,7 @@ function createApp() {
         };
         return this.activeCaptions.some(isVoiced);
       },
+
       shownCaptions: function () {
         if (
           !this.captions ||
@@ -1339,34 +1353,40 @@ function createApp() {
         var self = this;
         var result = [];
 
-        var maxBuffer = 0.007; // 0.3s
+        var maxBuffer = 0.05; // 0.3s
         var bufferRate = 0.0005; // 30 char = 0.15s
 
-        var isActiveAtTime = function (caption) {
-          var smartBuffer = Math.min(
-            maxBuffer,
-            caption.text.length * bufferRate
-          );
-          return (
-            caption.startTime <= time && time <= caption.endTime + smartBuffer
-          );
-        };
+     var isActiveAtTime = function (caption) {
+    // Safety check for undefined captions
+    if (!caption || !caption.text) {
+      return false;
+    }
+    
+    var smartBuffer = Math.min(maxBuffer, caption.text.length * bufferRate);
+    var startCheck = caption.startTime <= time;
+    var endCheck = time <= caption.endTime + smartBuffer;
+    var result = startCheck && endCheck;
+    
+    return result;
+  };
 
-        this.captionSources.forEach(function (sourceId) {
-          if (!self.captions[sourceId] || self.captions[sourceId].length === 0)
-            return;
+  // SINGLE forEach loop (not two!)
+  this.captionSources.forEach(function (sourceId) {
+    if (!self.captions[sourceId] || self.captions[sourceId].length === 0)
+      return;
 
-          var actives = self.captions[sourceId]
-            .filter(isActiveAtTime)
-            .filter(function (c) {
-              return !self.savedSettings.deletedCaptionIds.includes(c.id);
-            });
+    var captions = self.captions[sourceId];
+    
+    // Filter captions with safety checks
+    var actives = captions
+      .filter(isActiveAtTime)
 
-          actives.forEach(function (cap) {
-            cap.sourceId = sourceId;
-            result.push(cap);
-          });
-        });
+    // Add active captions to result
+    actives.forEach(function (cap) {
+      cap.sourceId = sourceId;
+      result.push(cap);
+    });
+  });
 
         result.sort((a, b) => a.startTime - b.startTime);
 
@@ -2233,7 +2253,6 @@ function createApp() {
             case "B":
               if (sidebarNG) return;
               if (e.ctrlKey || e.altKey || e.metaKey) return;
-              debugger;
               stopEvent(e);
               self.toggleSidebar();
               break;
