@@ -2226,7 +2226,7 @@ function createApp() {
               if (eitherNG) return;
               if (e.ctrlKey || e.altKey || e.metaKey) return;
               stopEvent(e);
-              if (e.ctrlKey) {
+              if (e.shiftKey) {
                 // Shift+V: Toggle subtitle-2 visibility
                 self.savedSettings.showSubtitle2 =
                   !self.savedSettings.showSubtitle2;
