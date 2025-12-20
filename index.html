@@ -1036,7 +1036,7 @@
       width: 100%;
       text-align: center;
       color: white;
-      text-shadow: var(--text-shadow, 
+      text-shadow: var(--text-shadow,
         -1px -1px 0 black, 1px -1px 0 black, -1px 1px 0 black, 1px 1px 0 black,
         -2px -2px 0 black, 2px -2px 0 black, -2px 2px 0 black, 2px 2px 0 black,
         -3px -3px 0 black, 3px -3px 0 black, -3px 3px 0 black, 3px 3px 0 black,
@@ -1072,6 +1072,25 @@
   align-items: center;
   justify-content: center;
 }
+
+    .back-button {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      z-index: 1001;
+      padding: 8px 16px;
+      background-color: var(--bw-150);
+      color: white;
+      border: 1px solid var(--bw-700);
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      transition: background-color 0.2s;
+    }
+
+    .back-button:hover {
+      background-color: var(--bw-300);
+    }
 
   </style>
 

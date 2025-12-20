@@ -272,10 +272,22 @@ function showControls() {
   }
 }
 const colorMap = {
-  particle: "#ff69b4", // pink
-  kanji: "#6969ff", // blue
-  kana: "#32ed32", // green
-  default: "#ffffff", // white
+  // More colors with 40% less saturation (more muted)
+  particle: "#d45ca7",     // pink (40% less saturated)
+  kanji: "#5a5aff",        // blue (40% less saturated)
+  kana: "#52c752",         // green (40% less saturated)
+  verb: "#a66eff",         // purple for verbs
+  adjective: "#ff6e6e",    // red for adjectives
+  noun: "#6ec6ff",         // light blue for nouns
+  adverb: "#ffaa6e",       // orange for adverbs
+  pronoun: "#c46eff",      // violet for pronouns
+  conjunction: "#6effd4",  // cyan for conjunctions
+  interjection: "#ff6ec4", // magenta for interjections
+  numeral: "#6eff6e",      // lime for numbers
+  prefix: "#caa6ff",       // light purple for prefixes
+  suffix: "#ffcaa6",       // light orange for suffixes
+  auxiliary: "#a6ffd4",    // light green for auxiliaries
+  default: "#cccccc",      // light gray (40% less saturated white)
 };
 
 // Function to check if text contains Japanese characters
@@ -351,7 +363,42 @@ function isParticleChar(char) {
 
 function getWordType(token, surface) {
   if (token) {
-    if (token.pos === "助詞") return "particle";
+    // Check for different parts of speech (using kuromoji.js POS tags)
+    const pos = token.pos || "";
+    const pos_detail_1 = token.pos_detail_1 || "";
+
+    // Particles
+    if (pos === "助詞") return "particle";
+
+    // Verbs
+    if (pos === "動詞") return "verb";
+
+    // Adjectives
+    if (pos === "形容詞") return "adjective";
+
+    // Adverbs
+    if (pos === "副詞") return "adverb";
+
+    // Nouns
+    if (pos === "名詞") {
+      // Special noun categories
+      if (pos_detail_1 === "代名詞") return "pronoun";
+      if (pos_detail_1 === "数詞") return "numeral";
+      return "noun";
+    }
+
+    // Conjunctions
+    if (pos === "接続詞") return "conjunction";
+
+    // Interjections
+    if (pos === "感動詞") return "interjection";
+
+    // Auxiliaries and other verb-like elements
+    if (pos === "助動詞") return "auxiliary";
+
+    // Prefixes and suffixes
+    if (pos === "接頭詞") return "prefix";
+    if (pos === "接尾詞") return "suffix";
   } else {
     // Fallback for when token is not available.
     if (isParticleChar(surface)) return "particle";
@@ -786,7 +833,12 @@ Vue.component("video-list", {
       // Prevent default to avoid double-triggering with double-click
       e.preventDefault();
       e.stopPropagation();
-      this.toggleSelect(video);
+
+      // Immediately play the clicked video instead of just selecting it
+      this.$emit("select", {
+        ...video,
+        url: `/videos${video.path.startsWith("/") ? "" : "/"}${video.path}`,
+      });
     },
 
     onDragOver(e) {
@@ -898,11 +950,34 @@ Vue.component("video-list", {
     },
 
     async loadVideos(path = "") {
-      console.log("loadVideos", path);
+      console.log("loadVideos raw path:", path);
       this.isLoading = true;
       this.error = null;
       try {
-        const res = await fetch(`/api/videos?path=${encodeURIComponent(path)}`);
+        // Split path, encode each segment, rejoin with /
+        const encodedPath = path
+          .split('/')
+          .filter(segment => segment)  // Remove empty segments
+          .map(segment => encodeURIComponent(segment))
+          .join('/');
+
+        console.log("loadVideos encoded path:", encodedPath);
+
+        const url = `/api/videos?path=${encodedPath}`;
+        console.log("Full URL:", url);
+
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+
+        const res = await fetch(url, {
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+        }
+
         const data = await res.json();
         this.videos = data.videos.sort((a, b) =>
           a.isDirectory === b.isDirectory
@@ -913,8 +988,13 @@ Vue.component("video-list", {
         );
         console.log("loadVideos success", this.videos.length);
       } catch (e) {
-        console.error("loadVideos error", e);
-        this.error = e.message || "Failed to load";
+        if (e.name === 'AbortError') {
+          console.error("Request timed out");
+          this.error = "Request timed out - check your path encoding";
+        } else {
+          console.error("loadVideos error", e);
+          this.error = e.message || "Failed to load";
+        }
       } finally {
         this.isLoading = false;
         console.log("loadVideos done");
@@ -936,7 +1016,8 @@ Vue.component("video-list", {
     navigate(name) {
       if (name === "..") this.currentPath.pop();
       else this.currentPath.push(name);
-      this.loadVideos(this.currentPath.join("/"));
+      const path = this.currentPath.join("/");
+      this.loadVideos(path);
     },
     toggleSelect(v) {
       this.selectedVideos.has(v.path)
@@ -994,7 +1075,16 @@ Vue.component("video-list", {
   },
   mounted() {
     console.log("mounted videoList");
-    this.loadVideos();
+    // Only auto-load if there's no specific directory routing happening
+    // The parent component will call loadVideos() if it's handling specific path routing
+    const hash = window.location.hash.substring(1);
+    if (hash && hash.startsWith('dir/')) {
+      // We're routing to a specific directory; parent component will handle loading
+      // Don't auto-load from mounted hook to avoid race condition
+    } else {
+      // No specific directory routing (either root dir or other routes), load normally
+      this.loadVideos();
+    }
     const result = parseWatchHistoryData(localStorage.getItem("savedSettings"));
     let wh = document.querySelector("#watchhistory");
     if (wh) wh.innerHTML = result.html;
@@ -1170,6 +1260,9 @@ function createApp() {
       videoPlaylist: [],
       currentPlaylistIndex: -1,
 
+      // URL routing related
+      isHandlingUrlChange: false,  // Flag to prevent hashchange loops
+
       // Your existing subtitle app data
       subtitleContents: {},
       subtitleOrder: [],
@@ -1179,6 +1272,7 @@ function createApp() {
       subtitlesFileName: null,
       activeCaptionIds: [],
       activeCaptionSource: null,
+      secondaryCaptionSource: null,  // For secondary subtitle selection
       captionSources: [],
       currentTime: 0.0,
       shouldShowVideoError: false,
@@ -1199,6 +1293,7 @@ function createApp() {
       captionMoveLimitSeconds: 12.0,
       textSelection: "",
       isAutoPauseMode: false,
+      autoPauseMode: 0,  // 0: disabled, 1: pause at end of current caption, 2: pause at start of next caption
       autoPauseCaptions: [],
       autoPauseMaxBufferSeconds: 0.3,
       preCaptionAutoPauseNet: 0.25,
@@ -1566,6 +1661,15 @@ function createApp() {
     created: function () {
       this.loadSavedSettings();
       this.setUpKeybindings();
+      this.handleInitialUrlRouting();
+      window.addEventListener('hashchange', this.handleHashChange);
+
+      // Reset the flag after initial routing is complete if it hasn't been reset already
+      if (this.isHandlingUrlChange) {
+        setTimeout(() => {
+          this.isHandlingUrlChange = false;
+        }, 100);
+      }
     },
     watch: {
       activeCaptions: function (newValue, oldValue) {
@@ -1707,8 +1811,24 @@ function createApp() {
       },
       toggleVideoList() {
         this.showVideoList = !this.showVideoList;
-        if (this.showVideoList && this.$refs.videoList) {
-          this.$refs.videoList.loadVideos();
+        if (this.showVideoList) {
+          // Update URL to show directory view
+          const hash = this.$refs.videoList && this.$refs.videoList.currentPath.length > 0
+            ? `#dir/${encodeURIComponent(this.$refs.videoList.currentPath.join('/'))}`
+            : '#dir';
+          this.updateUrlHash(hash);
+
+          if (this.$refs.videoList) {
+            this.$refs.videoList.loadVideos(this.$refs.videoList.currentPath.join('/'));
+          }
+        } else {
+          // If currently playing a video, update to player view
+          if (this.currentVideo && this.currentVideo.path) {
+            const hash = `#videos/${encodeURIComponent(this.currentVideo.path)}`;
+            this.updateUrlHash(hash);
+          } else {
+            this.updateUrlHash('#player');
+          }
         }
       },
       onVideoSelected(video) {
@@ -2159,8 +2279,7 @@ function createApp() {
               if (sidebarNG) return;
               if (e.ctrlKey || e.altKey || e.metaKey) return;
               stopEvent(e);
-              self.isAutoPauseMode = !self.isAutoPauseMode;
-              self.lastPauseTime = self.getCurrentTime();
+              self.cycleAutoPauseMode();
               break;
             case "j":
             case "J":
@@ -2174,7 +2293,7 @@ function createApp() {
               if (sidebarNG) return;
               if (e.ctrlKey || e.altKey || e.metaKey) return;
               stopEvent(e);
-              self.cycleSubtitleOrder(true);
+              self.showSubtitleSelectionDialog();
               break;
             case ".":
             case ">":
@@ -2247,7 +2366,19 @@ function createApp() {
               }
               break;
             case "y":
+              // Toggle visibility of the back-to-videos button
               toggleControls();
+
+              const backButton = document.querySelector('.back-button');
+              if (backButton) {
+                const currentVisibility = backButton.style.display !== 'none';
+                backButton.style.display = currentVisibility ? 'none' : 'block';
+                self.notify(
+                  currentVisibility
+                    ? "Back button hidden"
+                    : "Back button shown"
+                );
+              }
               break;
             case "b":
             case "B":
@@ -3088,6 +3219,18 @@ function createApp() {
           return;
 
         const time = this.currentTime;
+        // Find the current caption that is playing (contains the current time)
+        const currentCaption = this.captions[source].find(
+          (c) => c.startTime <= time && time <= c.endTime
+        );
+
+        if (currentCaption) {
+          this.goToCaptionStart(currentCaption);
+          return;
+        }
+
+        // If no current caption found, find the most recent caption that ended before now
+        // This is the fallback behavior
         const pastCaptions = this.captions[source].filter(
           (c) => c.endTime < time
         );
@@ -3432,47 +3575,70 @@ function createApp() {
       },
 
       handleAutoPause: function (time, removedCaptionIds) {
-        if (
-          !this.isAutoPauseMode ||
-          !this.activeCaptions ||
-          this.activeCaptions.length === 0
-        )
+        // If auto-pause is disabled (mode 0), return early
+        if (this.autoPauseMode === 0 || !this.activeCaptions || this.activeCaptions.length === 0)
           return;
 
         var self = this;
-        var nextCaption = this.findNeighboringCaptionByOffset(
-          this.activeCaptions[this.activeCaptions.length - 1],
-          1
-        );
-        var shouldBeAutoPaused = function (caption) {
-          var buffer = self.autoPauseMaxBufferSeconds;
-          if (removedCaptionIds.indexOf(caption.id) !== -1) buffer = 0;
-          else if (nextCaption && caption.endTime < nextCaption.startTime) {
-            var nonVoicedSpace = nextCaption.startTime - caption.endTime;
-            buffer = nonVoicedSpace - self.preCaptionAutoPauseNet;
-            buffer = Math.max(
-              0,
-              Math.min(buffer, self.autoPauseMaxBufferSeconds)
-            );
-          }
 
-          return (
-            caption.endTime + buffer < time && self.captionHasPlayed(caption)
+        // Mode 1: Pause at end of current caption
+        if (this.autoPauseMode === 1) {
+          var nextCaption = this.findNeighboringCaptionByOffset(
+            this.activeCaptions[this.activeCaptions.length - 1],
+            1
           );
-        };
+          var shouldBeAutoPaused = function (caption) {
+            var buffer = self.autoPauseMaxBufferSeconds;
+            if (removedCaptionIds.indexOf(caption.id) !== -1) buffer = 0;
+            else if (nextCaption && caption.endTime < nextCaption.startTime) {
+              var nonVoicedSpace = nextCaption.startTime - caption.endTime;
+              buffer = nonVoicedSpace - self.preCaptionAutoPauseNet;
+              buffer = Math.max(
+                0,
+                Math.min(buffer, self.autoPauseMaxBufferSeconds)
+              );
+            }
 
-        if (this.activeCaptions.some(shouldBeAutoPaused)) {
-          if (this.skipNextAutoPause) {
-            this.skipNextAutoPause = false;
-            this.lastPauseTime = time;
-            return;
+            return (
+              caption.endTime + buffer < time && self.captionHasPlayed(caption)
+            );
+          };
+
+          if (this.activeCaptions.some(shouldBeAutoPaused)) {
+            if (this.skipNextAutoPause) {
+              this.skipNextAutoPause = false;
+              this.lastPauseTime = time;
+              return;
+            }
+            this.autoPauseCaptions = this.activeCaptions;
+            this.pause();
+            // Set up auto-save every 2 seconds
+            this.autoSaveInterval = setInterval(() => {
+              this.saveProgress();
+            }, 2000);
           }
-          this.autoPauseCaptions = this.activeCaptions;
-          this.pause();
-          // Set up auto-save every 2 seconds
-          this.autoSaveInterval = setInterval(() => {
-            this.saveProgress();
-          }, 2000);
+        }
+        // Mode 2: Pause at start of next caption
+        else if (this.autoPauseMode === 2) {
+          var nextCaption = this.findNeighboringCaptionByOffset(
+            this.activeCaptions[this.activeCaptions.length - 1],
+            1
+          );
+
+          if (nextCaption && time >= nextCaption.startTime && this.isPlaying) {
+            if (this.skipNextAutoPause) {
+              this.skipNextAutoPause = false;
+              this.lastPauseTime = time;
+              return;
+            }
+            // Set the auto-pause captions for consistency with mode 1
+            this.autoPauseCaptions = [nextCaption];
+            this.pause();
+            // Set up auto-save every 2 seconds
+            this.autoSaveInterval = setInterval(() => {
+              this.saveProgress();
+            }, 2000);
+          }
         }
       },
 
@@ -3488,6 +3654,29 @@ function createApp() {
 
       clearAutoPauseCaptions: function () {
         if (this.autoPauseCaptions.length > 0) this.autoPauseCaptions = [];
+      },
+
+      cycleAutoPauseMode: function() {
+        // Cycle through auto-pause modes: 0 (disabled) -> 1 (end of current) -> 2 (start of next) -> 0
+        this.autoPauseMode = (this.autoPauseMode + 1) % 3;
+
+        // Update the isAutoPauseMode flag based on the mode
+        this.isAutoPauseMode = this.autoPauseMode !== 0;
+
+        // Notify user about the current mode
+        let modeText = '';
+        switch(this.autoPauseMode) {
+          case 0:
+            modeText = 'Auto-pause: Disabled';
+            break;
+          case 1:
+            modeText = 'Auto-pause: At end of caption';
+            break;
+          case 2:
+            modeText = 'Auto-pause: At start of next caption';
+            break;
+        }
+        this.notify(modeText);
       },
 
       scrollToCaption: function (captionId) {
@@ -4134,7 +4323,490 @@ function createApp() {
           URL.revokeObjectURL(a.href);
         }, 1500);
       },
+
+      // URL routing methods
+      handleInitialUrlRouting: function() {
+        // Set flag during initial routing to prevent hashchange loop
+        this.isHandlingUrlChange = true;
+
+        // Check URL hash on initial load
+        const hash = window.location.hash.substring(1); // Remove the '#'
+
+        if (hash) {
+          // If there's a hash, parse it and set the appropriate view
+          const parts = hash.split('/');
+          const routeType = parts[0];
+
+          if (routeType === 'videos') {
+            // Load specific video
+            const videoPath = decodeURIComponent(parts.slice(1).join('/'));
+            this.loadVideoFromUrl(videoPath);
+          } else if (routeType === 'dir') {
+            // Navigate to specific directory
+            const dirPath = decodeURIComponent(parts.slice(1).join('/'));
+            console.log("Decoded dir path:", dirPath);  // ← ADD THIS
+            this.navigateToDirectory(dirPath);
+          } else if (routeType === 'player') {
+            // Keep showing the video player if we were in it
+            this.showVideoList = false;
+            this.isHandlingUrlChange = false;
+          } else {
+            // Default: show video list
+            this.showVideoList = true;
+            this.isHandlingUrlChange = false;
+          }
+        } else {
+          // No hash - show video list by default
+          this.showVideoList = true;
+          this.isHandlingUrlChange = false;
+        }
+
+        // If the routing didn't change the URL (like for player route), reset the flag
+        if (!this.isHandlingUrlChange) {
+          setTimeout(() => {
+            this.isHandlingUrlChange = false;
+          }, 100);
+        }
+      },
+
+      updateUrlHash: function(hash) {
+        this.isHandlingUrlChange = true;
+        window.location.hash = hash;  // This creates history entry
+        setTimeout(() => {
+          this.isHandlingUrlChange = false;
+        }, 100);
+      },
+
+      navigateToDirectory: function(dirPath) {
+        console.log("navigateToDirectory called with:", dirPath);
+
+        // Set the app to show video list and navigate to the specified directory
+        this.showVideoList = true;
+
+        const hash = dirPath ? `#dir/${encodeURIComponent(dirPath)}` : '#dir';
+        console.log("Setting hash to:", hash);
+
+        this.updateUrlHash(hash);
+
+        this.$nextTick(() => {
+          if (this.$refs.videoList) {
+            if (dirPath) {
+              const pathParts = dirPath.split('/').filter(p => p);
+              console.log("Setting currentPath to:", pathParts);
+              this.$refs.videoList.currentPath = pathParts;
+            } else {
+              this.$refs.videoList.currentPath = [];
+            }
+
+            const pathToLoad = dirPath || '';
+            console.log("Calling loadVideos with:", pathToLoad);
+            this.$refs.videoList.loadVideos(pathToLoad);
+          }
+        });
+      },
+
+      loadVideoFromUrl: function(videoPath) {
+        // Load a specific video by path
+        const videoObj = {
+          path: videoPath,
+          name: videoPath.split('/').pop(),
+          url: `/videos${videoPath.startsWith('/') ? '' : '/'}${videoPath}`
+        };
+
+        this.showVideoList = false;
+        this.onVideoSelected(videoObj);
+
+        // Update URL hash
+        const hash = `#videos/${encodeURIComponent(videoPath)}`;
+        this.updateUrlHash(hash);
+      },
+
+      onVideoSelected: function(video) {
+        if (!video) {
+          console.error("No video provided");
+          return;
+        }
+
+        console.log("Video selected:", video);
+
+        // Save progress of current video before loading new one
+        if (this.videoUrl) {
+          this.saveProgress();
+        }
+
+        this.showVideoList = false;
+        this.currentVideo = video;
+        this.shouldShowVideoError = false;
+        this.videoErrorMessage = null;
+        this.videoFileName = video.name;
+
+        // If we have a File object, create an object URL for it
+        if (video instanceof File) {
+          if (this.videoUrl) {
+            URL.revokeObjectURL(this.videoUrl);
+          }
+          this.videoUrl = URL.createObjectURL(video);
+        } else if (video.url) {
+          // If we have a URL, use it directly
+          this.videoUrl = video.url;
+        } else {
+          console.error("Video object has no valid URL or File data:", video);
+          this.shouldShowVideoError = true;
+          this.videoErrorMessage = "Invalid video file provided";
+          return;
+        }
+
+        // Update URL hash to reflect the current video
+        if (video.path) {
+          const hash = `#videos/${encodeURIComponent(video.path)}`;
+          this.updateUrlHash(hash);
+        }
+
+        // Auto-load subtitles with the same episode number
+        this.autoLoadSubtitles(video);
+
+        // Load and play the video
+        this.$nextTick(() => {
+          const videoEl = this.getVideoElement();
+          if (videoEl) {
+            videoEl.load();
+            videoEl
+              .play()
+              .then(() => {
+                // Wait 5 seconds before restoring progress
+                setTimeout(() => {
+                  console.log("Restoring saved position after delay");
+                  this.restoreProgress();
+                }, 500);
+              })
+              .catch((error) => {
+                console.error("Error playing video:", error);
+                this.shouldShowVideoError = true;
+                this.videoErrorMessage = error.message;
+
+                // Still try to restore position even if autoplay fails
+                setTimeout(() => {
+                  console.log("Restoring saved position after autoplay error");
+                  this.restoreProgress();
+                }, 500);
+              });
+          }
+        });
+      },
+
+      // Auto-load subtitles that match the video's episode number
+      async autoLoadSubtitles(video) {
+        if (!video.path && !video.name) {
+          return; // Can't auto-load without a path or name
+        }
+
+        // Extract episode information from video filename
+        const videoName = video.path ? video.path.split('/').pop() : video.name;
+        const episodeMatch = this.extractEpisodeNumber(videoName);
+
+        if (!episodeMatch) {
+          console.log("Could not extract episode number from:", videoName);
+          return;
+        }
+
+        console.log("Looking for subtitles matching episode:", episodeMatch);
+
+        try {
+          // Get the directory containing the video
+          const videoDir = video.path ? video.path.substring(0, video.path.lastIndexOf('/')) : '';
+
+          // Fetch video directory contents to find matching subtitle files
+          let apiUrl = '/api/videos';
+          if (videoDir) {
+            apiUrl += `?path=${encodeURIComponent(videoDir)}`;
+          }
+
+          const response = await fetch(apiUrl);
+          if (!response.ok) {
+            console.error("Failed to fetch directory contents:", response.statusText);
+            return;
+          }
+
+          const data = await response.json();
+          const subtitles = data.videos.filter(file =>
+            this.isSubtitleFile(file.name) &&
+            this.extractEpisodeNumber(file.name) === episodeMatch
+          );
+
+          if (subtitles.length > 0) {
+            console.log(`Found ${subtitles.length} matching subtitle file(s):`, subtitles);
+
+            // Load the first matching subtitle file
+            const subtitle = subtitles[0];
+            const subtitleUrl = `/videos${subtitle.path.startsWith('/') ? '' : '/'}${subtitle.path}`;
+
+            try {
+              const subtitleResponse = await fetch(subtitleUrl);
+              if (subtitleResponse.ok) {
+                const subtitleText = await subtitleResponse.text();
+                // Load the subtitle content
+                const sourceId = subtitle.path || subtitle.name;
+
+                // Add to subtitle contents and process
+                this.$set(this.subtitleContents, sourceId, subtitleText);
+
+                // If this is the first subtitle, add to the order list
+                if (this.subtitleOrder.indexOf(sourceId) === -1) {
+                  this.subtitleOrder.push(sourceId);
+                }
+
+                // Process the subtitle
+                const captions = this.fileToCaptions(
+                  subtitleText,
+                  this.subtitlesOffsetSeconds,
+                  this.customOffsets
+                );
+
+                if (captions) {
+                  this.$set(this.captions, sourceId, captions);
+                  this.furigana(sourceId);
+
+                  // Set this as the active caption source if none is active
+                  if (!this.activeCaptionSource) {
+                    this.activeCaptionSource = sourceId;
+                  }
+
+                  console.log("Auto-loaded subtitle:", subtitle.name);
+                }
+              }
+            } catch (error) {
+              console.error("Error loading subtitle file:", error);
+            }
+          } else {
+            console.log("No matching subtitle files found for episode:", episodeMatch);
+          }
+        } catch (error) {
+          console.error("Error auto-loading subtitles:", error);
+        }
+      },
+
+      // Extract episode number from filename using various patterns
+      extractEpisodeNumber(filename) {
+        // Common episode patterns
+        const patterns = [
+          /s\d+e(\d+)/i,          // S01E05
+          /season\d+episode(\d+)/i, // Season1Episode5
+          /ep\.?\s*(\d+)/i,        // Ep5, Ep 5, Episode 5
+          /episode\.?\s*(\d+)/i,   // Episode5, Episode 5
+          /(\d+)v\d+/i,            // 05v2
+          /part\.?\s*(\d+)/i,      // Part5
+          /c(\d{2,})/i,            // c05 (chapter format)
+          /(\d{1,2})\s*of\s*\d+/i, // 05 of 10
+          /.*?(\d{2,4})[^0-9]/,    // Any 2-4 digits followed by non-digit
+          /.*?[^\d](\d{2,4})\D*$/, // Any 2-4 digits at end
+        ];
+
+        for (const pattern of patterns) {
+          const match = filename.match(pattern);
+          if (match) {
+            const num = parseInt(match[1]);
+            // Filter out likely non-episode numbers (like years)
+            if (num > 0 && num < 1000 && !this.isLikelyYear(match[1])) {
+              return num.toString().padStart(2, '0'); // Return 0-padded two-digit string
+            }
+          }
+        }
+
+        // If no match found, try to find any number in the filename
+        const numMatch = filename.match(/\d+/);
+        if (numMatch) {
+          const num = parseInt(numMatch[0]);
+          if (num > 0 && num < 1000 && !this.isLikelyYear(numMatch[0])) {
+            return num.toString().padStart(2, '0');
+          }
+        }
+
+        return null;
+      },
+
+      // Check if a string looks like a year (to avoid false matches)
+      isLikelyYear(str) {
+        const num = parseInt(str);
+        return num > 1900 && num < 2050;
+      },
+
+      // Check if file is a subtitle file
+      isSubtitleFile(filename) {
+        return /\.(srt|vtt|ass|ssa)$/i.test(filename);
+      },
+
+      // Show subtitle selection dialog
+      showSubtitleSelectionDialog() {
+        // Create a modal dialog for selecting primary and secondary subtitles
+        const modal = document.createElement('div');
+        modal.id = 'subtitle-selection-modal';
+        modal.style.cssText = `
+          position: fixed;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          background: rgba(0, 0, 0, 0.7);
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          z-index: 10000;
+          font-family: Arial, sans-serif;
+        `;
+
+        // Get available subtitle sources
+        const availableSubtitles = Object.keys(this.captions).map(sourceId => {
+          return {
+            id: sourceId,
+            name: this.getSourceName(sourceId)
+          };
+        });
+
+        // Create dialog content
+        const dialog = document.createElement('div');
+        dialog.style.cssText = `
+          background: #222;
+          padding: 20px;
+          border-radius: 8px;
+          width: 500px;
+          max-width: 90%;
+          box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+        `;
+
+        let primarySelection = this.activeCaptionSource || '';
+        let secondarySelection = this.getSecondarySubtitleSource() || '';
+
+        dialog.innerHTML = `
+          <h3 style="margin-top: 0; color: white;">Select Subtitles</h3>
+
+          <div style="margin-bottom: 15px;">
+            <label style="display: block; color: white; margin-bottom: 5px;">Primary Subtitle:</label>
+            <select id="primary-subtitle-select" style="width: 100%; padding: 8px; background: #444; color: white; border: 1px solid #666; border-radius: 4px;">
+              <option value="">None</option>
+              ${availableSubtitles.map(sub =>
+                `<option value="${sub.id}" ${sub.id === primarySelection ? 'selected' : ''}>${sub.name}</option>`
+              ).join('')}
+            </select>
+          </div>
+
+          <div style="margin-bottom: 20px;">
+            <label style="display: block; color: white; margin-bottom: 5px;">Secondary Subtitle:</label>
+            <select id="secondary-subtitle-select" style="width: 100%; padding: 8px; background: #444; color: white; border: 1px solid #666; border-radius: 4px;">
+              <option value="">None</option>
+              ${availableSubtitles.map(sub =>
+                `<option value="${sub.id}" ${sub.id === secondarySelection ? 'selected' : ''}>${sub.name}</option>`
+              ).join('')}
+            </select>
+          </div>
+
+          <div style="display: flex; justify-content: flex-end; gap: 10px;">
+            <button id="cancel-subtitle-dialog" style="padding: 8px 16px; background: #555; color: white; border: none; border-radius: 4px; cursor: pointer;">Cancel</button>
+            <button id="apply-subtitle-dialog" style="padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">Apply</button>
+          </div>
+        `;
+
+        modal.appendChild(dialog);
+        document.body.appendChild(modal);
+
+        // Add event listeners
+        document.getElementById('cancel-subtitle-dialog').onclick = () => {
+          document.body.removeChild(modal);
+        };
+
+        document.getElementById('apply-subtitle-dialog').onclick = () => {
+          const primarySelect = document.getElementById('primary-subtitle-select');
+          const secondarySelect = document.getElementById('secondary-subtitle-select');
+
+          const newPrimary = primarySelect.value;
+          const newSecondary = secondarySelect.value;
+
+          // Apply primary subtitle
+          if (newPrimary) {
+            this.activeCaptionSource = newPrimary;
+          } else if (availableSubtitles.length > 0) {
+            // If none selected but there are options, clear the active source
+            this.activeCaptionSource = availableSubtitles[0]?.id || null;
+          }
+
+          // For secondary subtitles, update the settings
+          if (newSecondary) {
+            // Store the secondary subtitle selection in a new property
+            this.secondaryCaptionSource = newSecondary;
+            // Apply secondary subtitle display settings
+            // This would require additional logic to display secondary subtitles
+            this.applySecondarySubtitle(newSecondary);
+          } else {
+            this.secondaryCaptionSource = null;
+            this.applySecondarySubtitle(null);
+          }
+
+          document.body.removeChild(modal);
+          this.notify("Subtitle selections applied");
+        };
+      },
+
+      // Get the currently selected secondary subtitle source
+      getSecondarySubtitleSource() {
+        return this.secondaryCaptionSource || '';
+      },
+
+      // Apply secondary subtitle settings
+      applySecondarySubtitle(sourceId) {
+        if (!sourceId) {
+          this.savedSettings.showSubtitle2 = false;
+          return;
+        }
+
+        // Enable secondary subtitle display
+        this.savedSettings.showSubtitle2 = true;
+        // Additional logic would go here to actually render the secondary subtitle
+      },
+
+      handleHashChange: function() {
+        // Only process hash changes that weren't initiated by our own code
+        if (this.isHandlingUrlChange) {
+          return; // Don't process if we initiated this change
+        }
+
+        // Handle URL hash changes from browser back/forward buttons or direct URL access
+        const hash = window.location.hash.substring(1); // Remove the '#'
+
+        if (hash) {
+          const parts = hash.split('/');
+          const routeType = parts[0];
+
+          // Set flag to prevent loop processing
+          this.isHandlingUrlChange = true;
+
+          if (routeType === 'videos') {
+            // Load specific video
+            const videoPath = decodeURIComponent(parts.slice(1).join('/'));
+            this.loadVideoFromUrl(videoPath);
+          } else if (routeType === 'dir') {
+            // Navigate to specific directory
+            const dirPath = decodeURIComponent(parts.slice(1).join('/'));
+            console.log("Decoded dir path:", dirPath);  // ← ADD THIS
+            this.navigateToDirectory(dirPath);
+          } else if (routeType === 'player') {
+            // Keep showing the video player
+            this.showVideoList = false;
+          }
+
+          // Reset the flag after processing
+          setTimeout(() => {
+            this.isHandlingUrlChange = false;
+          }, 100); // Small delay to ensure processing is complete
+        } else {
+          // No hash - show video list by default
+          this.showVideoList = true;
+          this.isHandlingUrlChange = false;
+        }
+      }
     },
+    beforeDestroy: function() {
+      window.removeEventListener('hashchange', this.handleHashChange);
+      this.isHandlingUrlChange = false;
+    }
   });
 
   return vm;
