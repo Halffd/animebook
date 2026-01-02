@@ -1816,7 +1816,7 @@ function createApp() {
           const hash = this.$refs.videoList && this.$refs.videoList.currentPath.length > 0
             ? `#dir/${encodeURIComponent(this.$refs.videoList.currentPath.join('/'))}`
             : '#dir';
-          this.updateUrlHash(hash);
+          this.updateUrlHash(hash, true);  // User action - add to history
 
           if (this.$refs.videoList) {
             this.$refs.videoList.loadVideos(this.$refs.videoList.currentPath.join('/'));
@@ -1825,9 +1825,9 @@ function createApp() {
           // If currently playing a video, update to player view
           if (this.currentVideo && this.currentVideo.path) {
             const hash = `#videos/${encodeURIComponent(this.currentVideo.path)}`;
-            this.updateUrlHash(hash);
+            this.updateUrlHash(hash, true);  // User action - add to history
           } else {
-            this.updateUrlHash('#player');
+            this.updateUrlHash('#player', true);  // User action - add to history
           }
         }
       },
@@ -2707,6 +2707,56 @@ function createApp() {
               stopEvent(e);
               self.increasePlaybackSpeed(false);
               break;
+            case "Home":
+              if (videoNG) return;
+              stopEvent(e);
+              self.setCurrentTime(0, true);
+              break;
+            case "End":
+              if (videoNG) return;
+              stopEvent(e);
+              var videoElement = self.getVideoElement();
+              if (videoElement && videoElement.duration) {
+                self.setCurrentTime(videoElement.duration - 0.1, true);
+              }
+              break;
+            case "PageUp":
+              if (videoNG) return;
+              stopEvent(e);
+              // Go to previous video in playlist
+              self.playPreviousVideo();
+              break;
+            case "PageDown":
+              if (videoNG) return;
+              stopEvent(e);
+              // Go to next video in playlist
+              self.playNextVideo();
+              break;
+            // Number keys for percentage navigation (0-9)
+            case "0":
+            case "1":
+            case "2":
+            case "3":
+            case "4":
+            case "5":
+            case "6":
+            case "7":
+            case "8":
+            case "9":
+              if (videoNG) return;
+              stopEvent(e);
+              var videoElement = self.getVideoElement();
+              if (videoElement && videoElement.duration) {
+                // Calculate 10 * digit percent of the video duration
+                var digit = parseInt(e.key);
+                var percentage = digit * 10 / 100; // Convert digit*10% to decimal
+                var newTime = videoElement.duration * percentage;
+                // Make sure we don't go past the end
+                newTime = Math.min(newTime, videoElement.duration - 0.1);
+                self.setCurrentTime(newTime, true);
+                self.notify(`Jumped to ${digit * 10}%`);
+              }
+              break;
           }
         });
       },
@@ -2764,6 +2814,28 @@ function createApp() {
 
       toggleOffsetMode: function () {
         this.isOffsetMode = !this.isOffsetMode;
+      },
+
+      playNextVideo: function() {
+        if (this.videoPlaylist && this.videoPlaylist.length > 1 && this.currentPlaylistIndex < this.videoPlaylist.length - 1) {
+          this.currentPlaylistIndex++;
+          const nextVideo = this.videoPlaylist[this.currentPlaylistIndex];
+          this.onVideoSelected(nextVideo);
+          this.notify(`Playing next video: ${nextVideo.name}`);
+        } else {
+          this.notify("No next video available");
+        }
+      },
+
+      playPreviousVideo: function() {
+        if (this.videoPlaylist && this.videoPlaylist.length > 1 && this.currentPlaylistIndex > 0) {
+          this.currentPlaylistIndex--;
+          const prevVideo = this.videoPlaylist[this.currentPlaylistIndex];
+          this.onVideoSelected(prevVideo);
+          this.notify(`Playing previous video: ${prevVideo.name}`);
+        } else {
+          this.notify("No previous video available");
+        }
       },
 
       onOffsetInputScroll: function (e) {
@@ -4340,12 +4412,12 @@ function createApp() {
           if (routeType === 'videos') {
             // Load specific video
             const videoPath = decodeURIComponent(parts.slice(1).join('/'));
-            this.loadVideoFromUrl(videoPath);
+            this.loadVideoFromUrlInitial(videoPath);  // Use initial method for routing from URL
           } else if (routeType === 'dir') {
             // Navigate to specific directory
             const dirPath = decodeURIComponent(parts.slice(1).join('/'));
             console.log("Decoded dir path:", dirPath);  // ← ADD THIS
-            this.navigateToDirectory(dirPath);
+            this.navigateToDirectoryInitial(dirPath);  // Use initial version for routing from URL
           } else if (routeType === 'player') {
             // Keep showing the video player if we were in it
             this.showVideoList = false;
@@ -4369,9 +4441,15 @@ function createApp() {
         }
       },
 
-      updateUrlHash: function(hash) {
+      updateUrlHash: function(hash, addToHistory = true) {
         this.isHandlingUrlChange = true;
-        window.location.hash = hash;  // This creates history entry
+
+        if (addToHistory) {
+          window.history.pushState({}, '', window.location.pathname + hash);
+        } else {
+          window.history.replaceState({}, '', window.location.pathname + hash);
+        }
+
         setTimeout(() => {
           this.isHandlingUrlChange = false;
         }, 100);
@@ -4386,7 +4464,35 @@ function createApp() {
         const hash = dirPath ? `#dir/${encodeURIComponent(dirPath)}` : '#dir';
         console.log("Setting hash to:", hash);
 
-        this.updateUrlHash(hash);
+        this.updateUrlHash(hash, true);  // User action - add to history
+
+        this.$nextTick(() => {
+          if (this.$refs.videoList) {
+            if (dirPath) {
+              const pathParts = dirPath.split('/').filter(p => p);
+              console.log("Setting currentPath to:", pathParts);
+              this.$refs.videoList.currentPath = pathParts;
+            } else {
+              this.$refs.videoList.currentPath = [];
+            }
+
+            const pathToLoad = dirPath || '';
+            console.log("Calling loadVideos with:", pathToLoad);
+            this.$refs.videoList.loadVideos(pathToLoad);
+          }
+        });
+      },
+
+      navigateToDirectoryInitial: function(dirPath) {
+        console.log("navigateToDirectoryInitial called with:", dirPath);
+
+        // Set the app to show video list and navigate to the specified directory
+        this.showVideoList = true;
+
+        const hash = dirPath ? `#dir/${encodeURIComponent(dirPath)}` : '#dir';
+        console.log("Setting hash to:", hash);
+
+        this.updateUrlHash(hash, false);  // Initial routing - don't add to history
 
         this.$nextTick(() => {
           if (this.$refs.videoList) {
@@ -4418,7 +4524,23 @@ function createApp() {
 
         // Update URL hash
         const hash = `#videos/${encodeURIComponent(videoPath)}`;
-        this.updateUrlHash(hash);
+        this.updateUrlHash(hash, true);  // User action - add to history
+      },
+
+      loadVideoFromUrlInitial: function(videoPath) {
+        // Load a specific video by path (for initial routing - doesn't add to history)
+        const videoObj = {
+          path: videoPath,
+          name: videoPath.split('/').pop(),
+          url: `/videos${videoPath.startsWith('/') ? '' : '/'}${videoPath}`
+        };
+
+        this.showVideoList = false;
+        this.onVideoSelected(videoObj);
+
+        // Update URL hash without adding to history (initial routing)
+        const hash = `#videos/${encodeURIComponent(videoPath)}`;
+        this.updateUrlHash(hash, false);  // Initial routing - don't add to history
       },
 
       onVideoSelected: function(video) {
@@ -4459,7 +4581,7 @@ function createApp() {
         // Update URL hash to reflect the current video
         if (video.path) {
           const hash = `#videos/${encodeURIComponent(video.path)}`;
-          this.updateUrlHash(hash);
+          this.updateUrlHash(hash, true);  // User action - add to history
         }
 
         // Auto-load subtitles with the same episode number
@@ -4781,12 +4903,12 @@ function createApp() {
           if (routeType === 'videos') {
             // Load specific video
             const videoPath = decodeURIComponent(parts.slice(1).join('/'));
-            this.loadVideoFromUrl(videoPath);
+            this.loadVideoFromUrlInitial(videoPath);  // Use initial method for routing from URL
           } else if (routeType === 'dir') {
             // Navigate to specific directory
             const dirPath = decodeURIComponent(parts.slice(1).join('/'));
             console.log("Decoded dir path:", dirPath);  // ← ADD THIS
-            this.navigateToDirectory(dirPath);
+            this.navigateToDirectoryInitial(dirPath);  // Use initial version for routing from URL
           } else if (routeType === 'player') {
             // Keep showing the video player
             this.showVideoList = false;
