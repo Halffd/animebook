@@ -1775,6 +1775,9 @@ function createApp() {
           return textContent.trim() + ' ';
         });
 
+        // Remove ASS draw patterns like 'm -295 -320 l ...'
+        text = text.replace(/\b[a-zA-Z](?:\s*-?\d+\.?\d*(?:[eE][-+]?\d+)?){2,}(?:\s*[a-zA-Z](?:\s*-?\d+\.?\d*(?:[eE][-+]?\d+)?){2,})*\b/g, '');
+
         // Don't mess with ruby/rt tags, and also preserve span for coloring
         text = text.replace(/<(?!\/?(?:ruby|rt|rp|span))[^>]*>/g, "");
 
