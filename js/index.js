@@ -1768,6 +1768,13 @@ function createApp() {
       cleanSubtitleText: function (text) {
         if (!text) return "";
 
+        // Remove SVG path data pattern: {=number}path_commands{=number}text_content
+        // Capture the text content after the second marker and preserve it
+        text = text.replace(/\{=\d+\}[^{]*?\{=\d+\}\s*([^{}]*)/g, function(match, textContent) {
+          // Extract and return only the text content, with a space to separate from next content
+          return textContent.trim() + ' ';
+        });
+
         // Don't mess with ruby/rt tags, and also preserve span for coloring
         text = text.replace(/<(?!\/?(?:ruby|rt|rp|span))[^>]*>/g, "");
 
