@@ -754,31 +754,20 @@ Vue.component("video-list", {
     },
   },
   template: `
-          <div class="video-list" 
+          <div class="video-list"
                @dragover.prevent="onDragOver"
                @dragleave.prevent="onDragLeave"
                @drop.prevent="onDrop"
-               :class="{ 'drag-over': isDragging }">
+               @keydown="handleKeyDown"
+               tabindex="0"
+               :class="{ 'drag-over': isDragging }"
+               style="padding-bottom: 100px;">
             <div class="flex justify-between items-center mb-4" style="width: 100%;">
               <div class="flex items-center gap-2">
                 <h2 class="text-xl font-semibold">Videos</h2>
                 <div v-if="currentPath.length" class="text-sm text-gray-400">
                   / {{ currentPath.join(' / ') }}
                 </div>
-              </div>
-              <div class="flex items-center gap-2">
-                <button v-if="selectedCount" class="px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700" @click="playSelected">
-                  Play Selected ({{ selectedCount }})
-                </button>
-                <button v-if="videos.length" class="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700" @click="selectAll">
-                  Select All
-                </button>
-                <button v-if="selectedCount" class="px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700" @click="clearSelection">
-                  Clear
-                </button>
-                <button class="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700" @click="loadVideos(currentPath.join('/'))" :disabled="isLoading">
-                  Refresh
-                </button>
               </div>
             </div>
             <div v-if="isUploading" class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
@@ -797,21 +786,77 @@ Vue.component("video-list", {
               <div v-if="currentPath.length" class="p-4 bg-gray-800 rounded-lg hover:bg-gray-700 cursor-pointer" @click="navigate('..')">
                 <span>&larr; Back</span>
               </div>
-              <div v-for="v in folders" :key="v.path" class="p-4 bg-gray-800 rounded-lg hover:bg-gray-700 cursor-pointer" @click="navigate(v.name)">
+              <div v-for="v in folders" :key="v.path" :data-path="v.path" class="p-4 bg-gray-800 rounded-lg hover:bg-gray-700 cursor-pointer" @click="navigate(v.name)" tabindex="0" @keydown.enter="navigate(v.name)" @keydown.space="navigate(v.name)">
                 📁 {{ v.name }}<br><small>{{ formatDate(v.lastModified) }}</small>
               </div>
-              <div v-for="v in files" :key="v.path" class="p-4 bg-gray-800 rounded-lg hover:bg-gray-700 cursor-pointer" :class="{ 'ring-2 ring-blue-500': selectedVideos.has(v.path) }" @click="onVideoClick($event, v)" @dblclick="onVideoSelected(v)">
+              <div v-for="v in files" :key="v.path" :data-path="v.path" class="p-4 bg-gray-800 rounded-lg hover:bg-gray-700 cursor-pointer" :class="{ 'ring-2 ring-blue-500': selectedVideos.has(v.path) }" @click="onVideoClick($event, v)" @dblclick="onVideoSelected(v)" tabindex="0" @keydown.enter="onVideoClick($event, v)" @keydown.space="onVideoClick($event, v)">
                 🎬 {{ v.name }}<br><small>{{ formatSize(v.size) }} • {{ formatDate(v.lastModified) }}</small>
               </div>
             </div>
             <div class="border border-blue-400 p-2 rounded" id="watchhistory"></div>
-              <div class="border border-gray-400 p-2 rounded">
-                <input type="file" multiple @change="onFileChange" accept="video/*">
+
+              <!-- Import/Export Settings Buttons below video list -->
+              <div class="flex flex-wrap gap-2 p-3 bg-gray-900 rounded-lg mt-4">
+                <!-- Import/Export Settings Dropdown -->
+                <div class="relative group flex-shrink-0">
+                  <button
+                    class="py-2 px-3 bg-gradient-to-r from-purple-700 to-indigo-800 text-white rounded-lg hover:from-purple-600 hover:to-indigo-700 transition-all duration-200 transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-opacity-50 flex items-center"
+                    title="Import/Export Settings"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-1" viewBox="0 0 20 20" fill="currentColor">
+                      <path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd" />
+                    </svg>
+                    <span class="text-xs">Import/Export</span>
+                  </button>
+                  <div class="absolute right-0 mt-1 w-48 bg-gray-800 border border-gray-700 rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-opacity z-10">
+                    <button
+                      @click="$emit('export-settings')"
+                      class="block w-full text-left px-4 py-2 hover:bg-gray-700 border-b border-gray-700 last:border-b-0"
+                    >
+                      Export Settings
+                    </button>
+                    <label class="block w-full text-left px-4 py-2 hover:bg-gray-700 cursor-pointer">
+                      Import Settings
+                      <input
+                        type="file"
+                        accept=".json"
+                        @change="handleImportFile"
+                        class="hidden"
+                      />
+                    </label>
+                  </div>
+                </div>
+
+                <button v-if="selectedCount" class="py-2 px-3 bg-gradient-to-r from-green-700 to-emerald-800 text-white rounded-lg hover:from-green-600 hover:to-emerald-700 transition-all duration-200 transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-50 flex-shrink-0" @click="playSelected">
+                  <div class="text-xs">Play ({{ selectedCount }})</div>
+                </button>
+                <button v-else class="py-2 px-3 bg-gray-700 text-gray-400 rounded-lg cursor-not-allowed flex-shrink-0" disabled>
+                  <div class="text-xs">Play</div>
+                </button>
+
+                <button v-if="videos.length" class="py-2 px-3 bg-gradient-to-r from-blue-700 to-cyan-800 text-white rounded-lg hover:from-blue-600 hover:to-cyan-700 transition-all duration-200 transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 flex-shrink-0" @click="selectAll">
+                  <div class="text-xs">Select All</div>
+                </button>
+                <button v-else class="py-2 px-3 bg-gray-700 text-gray-400 rounded-lg cursor-not-allowed flex-shrink-0" disabled>
+                  <div class="text-xs">Select All</div>
+                </button>
+
+                <button v-if="selectedCount" class="py-2 px-3 bg-gradient-to-r from-red-700 to-rose-800 text-white rounded-lg hover:from-red-600 hover:to-rose-700 transition-all duration-200 transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-opacity-50 flex-shrink-0" @click="clearSelection">
+                  <div class="text-xs">Clear</div>
+                </button>
+                <button v-else class="py-2 px-3 bg-gray-700 text-gray-400 rounded-lg cursor-not-allowed flex-shrink-0" disabled>
+                  <div class="text-xs">Clear</div>
+                </button>
+
+                <button class="py-2 px-3 bg-gradient-to-r from-blue-800 to-slate-800 text-white rounded-lg hover:from-blue-700 hover:to-slate-700 transition-all duration-200 transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 flex-shrink-0" @click="loadVideos(currentPath.join('/'))" :disabled="isLoading">
+                  <div class="text-xs">{{ isLoading ? 'Loading...' : 'Refresh' }}</div>
+                </button>
               </div>
+
             <div v-if="videos.length" class="fixed bottom-0 left-0 right-0 p-4 bg-gray-900 border-t border-gray-800 flex justify-center items-center gap-4">
               <small class="text-gray-400">{{ selectedCount ? selectedCount + ' selected' : 'No selection' }}</small>
-              <button class="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700" 
-                      @click="playSelected" 
+              <button class="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+                      @click="playSelected"
                       :disabled="!selectedCount"
                       @keyup.enter="playSelected"
                       :class="{'opacity-50 cursor-not-allowed': !selectedCount}">
@@ -1053,26 +1098,105 @@ Vue.component("video-list", {
     emitSelect(v) {
       this.onVideoSelected(v);
     },
+
+    handleImportFile(event) {
+      const file = event.target.files[0];
+      if (file) {
+        this.$emit('import-settings', file);
+      }
+      // Reset the input so the same file can be selected again
+      event.target.value = '';
+    },
+
+    handleArrowNavigation(key) {
+      // Get all video/folder elements from the DOM
+      const allElements = Array.from(document.querySelectorAll('[data-path]'));
+      if (allElements.length === 0) return;
+
+      // Find the currently focused or selected element
+      let currentIndex = -1;
+      const selectedPaths = Array.from(this.selectedVideos);
+
+      // First try to find based on selection
+      if (selectedPaths.length > 0) {
+        const lastSelectedPath = selectedPaths[selectedPaths.length - 1];
+        currentIndex = allElements.findIndex(el => el.getAttribute('data-path') === lastSelectedPath);
+      }
+
+      // If no selection found, try to find currently focused element
+      if (currentIndex === -1) {
+        const focusedElement = document.activeElement;
+        if (focusedElement && focusedElement.hasAttribute('data-path')) {
+          currentIndex = allElements.findIndex(el => el === focusedElement);
+        }
+      }
+
+      // If still no current element, start from the first one
+      if (currentIndex === -1) {
+        currentIndex = 0;
+      }
+
+      let newIndex = currentIndex;
+
+      switch (key) {
+        case 'ArrowUp':
+          newIndex = currentIndex > 0 ? currentIndex - 1 : allElements.length - 1;
+          break;
+        case 'ArrowDown':
+          newIndex = currentIndex < allElements.length - 1 ? currentIndex + 1 : 0;
+          break;
+        case 'ArrowLeft':
+          newIndex = currentIndex > 0 ? currentIndex - 1 : allElements.length - 1;
+          break;
+        case 'ArrowRight':
+          newIndex = currentIndex < allElements.length - 1 ? currentIndex + 1 : 0;
+          break;
+      }
+
+      if (newIndex !== currentIndex) {
+        const newElement = allElements[newIndex];
+        if (newElement) {
+          // Clear current selection and select the new item
+          this.selectedVideos.clear();
+          const newPath = newElement.getAttribute('data-path');
+          this.selectedVideos.add(newPath);
+
+          // Focus the element and scroll to it
+          newElement.focus();
+          newElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+      }
+    },
+
+    handleKeyDown(e) {
+      // Play selected videos on Enter key
+      if (
+        e.key === "Enter" &&
+        this.selectedCount &&
+        !e.shiftKey &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        !e.metaKey
+      ) {
+        e.preventDefault();
+        e.stopPropagation();
+        this.playSelected();
+      }
+      // Select all videos on Ctrl+A
+      else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
+        e.preventDefault();
+        e.stopPropagation();
+        this.selectAll();
+      }
+      // Arrow key navigation
+      else if (e.key.startsWith('Arrow')) {
+        e.preventDefault();
+        e.stopPropagation();
+        this.handleArrowNavigation(e.key);
+      }
+    },
   },
 
-  handleKeyDown(e) {
-    if (
-      e.key === "Enter" &&
-      this.selectedCount &&
-      !e.shiftKey &&
-      !e.ctrlKey &&
-      !e.altKey &&
-      !e.metaKey
-    ) {
-      e.preventDefault();
-      e.stopPropagation();
-      this.playSelected();
-    } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
-      e.preventDefault();
-      e.stopPropagation();
-      this.selectAll();
-    }
-  },
   mounted() {
     console.log("mounted videoList");
     // Only auto-load if there's no specific directory routing happening
@@ -1100,7 +1224,12 @@ function createApp() {
   <div v-show="showVideoList" class="video-list-view"
     style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 9999; background: #1a1a1a; color: white;">
     <div class="video-list-container">
-      <video-list ref="videoList" @select="onVideoSelected" @playlist="onPlaylistReceived"></video-list>
+      <video-list
+        ref="videoList"
+        @select="onVideoSelected"
+        @playlist="onPlaylistReceived"
+        @export-settings="exportLocalStorageData"
+        @import-settings="handleImportSettings"></video-list>
     </div>
   </div>
   
@@ -1259,6 +1388,9 @@ function createApp() {
       currentVideo: null,
       videoPlaylist: [],
       currentPlaylistIndex: -1,
+
+      // SubtitlesOctopus instance
+      octopusInstance: null,
 
       // URL routing related
       isHandlingUrlChange: false,  // Flag to prevent hashchange loops
@@ -1672,6 +1804,22 @@ function createApp() {
       }
     },
     watch: {
+      activeCaptionSource: function(newSourceId, oldSourceId) {
+          if (newSourceId && newSourceId.toLowerCase().endsWith('.ass')) {
+              this.setupOctopus(newSourceId);
+              // Hide built-in subtitle display
+              const currentCaptionEl = this.$el.querySelector('.current-caption');
+              if (currentCaptionEl) currentCaptionEl.style.visibility = 'hidden';
+          } else {
+              if (this.octopusInstance) {
+                  this.octopusInstance.dispose();
+                  this.octopusInstance = null;
+              }
+              // Show built-in subtitle display
+              const currentCaptionEl = this.$el.querySelector('.current-caption');
+              if (currentCaptionEl) currentCaptionEl.style.visibility = 'visible';
+          }
+      },
       activeCaptions: function (newValue, oldValue) {
         if (oldValue)
           oldValue.forEach(function (caption) {
@@ -1740,6 +1888,32 @@ function createApp() {
       },
     },
     methods: {
+      setupOctopus: function(sourceId) {
+        if (typeof SubtitlesOctopus === 'undefined') {
+          console.error("SubtitlesOctopus library not loaded. Please check the script tag in index.html");
+          return;
+        }
+
+        if (!this.videoUrl) {
+          console.warn("SubtitlesOctopus: Video not loaded yet.");
+          return;
+        }
+        if (this.octopusInstance) {
+          const subContent = this.subtitleContents[sourceId];
+          if(subContent) {
+            this.octopusInstance.setTrack(subContent);
+          }
+        } else {
+          const options = {
+            video: this.getVideoElement(),
+            subContent: this.subtitleContents[sourceId],
+            workerUrl: 'https://cdn.jsdelivr.net/npm/libass-wasm@4.1.0/dist/js/subtitles-octopus-worker.js',
+            onError: (e) => console.error('SubtitlesOctopus Error:', e),
+            debug: false
+          };
+          this.octopusInstance = new SubtitlesOctopus(options);
+        }
+      },
       cycleSubtitleOrder: function (reverse = false) {
         if (this.subtitleOrder.length < 2) return;
         if (reverse) {
@@ -1752,6 +1926,10 @@ function createApp() {
       processAllSubtitles: function () {
         for (const sourceId in this.subtitleContents) {
           if (Object.hasOwnProperty.call(this.subtitleContents, sourceId)) {
+            if (sourceId.toLowerCase().endsWith('.ass')) {
+              this.$set(this.captions, sourceId, []); // Set empty array to have the tab
+              continue;
+            }
             const content = this.subtitleContents[sourceId];
             const captions = this.fileToCaptions(
               content,
@@ -1765,6 +1943,96 @@ function createApp() {
           }
         }
       },
+
+      // Export all localStorage data to a JSON file
+      exportLocalStorageData: function() {
+        try {
+          const dataToExport = {};
+
+          // Get all localStorage keys
+          for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key) {
+              const value = localStorage.getItem(key);
+              dataToExport[key] = value;
+            }
+          }
+
+          // Create a JSON blob
+          const dataStr = JSON.stringify(dataToExport, null, 2);
+          const dataBlob = new Blob([dataStr], {type: 'application/json'});
+
+          // Create download link
+          const url = URL.createObjectURL(dataBlob);
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = `animebook-settings-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.json`;
+
+          // Trigger download
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+
+          // Clean up
+          URL.revokeObjectURL(url);
+
+          this.notify("Settings exported successfully!");
+        } catch (error) {
+          console.error("Error exporting localStorage data:", error);
+          this.notify("Error exporting settings: " + error.message);
+        }
+      },
+
+      // Import localStorage data from a JSON file
+      importLocalStorageData: function(file) {
+        return new Promise((resolve, reject) => {
+          try {
+            const reader = new FileReader();
+
+            reader.onload = (event) => {
+              try {
+                const importedData = JSON.parse(event.target.result);
+
+                // Clear current localStorage
+                localStorage.clear();
+
+                // Import each key-value pair
+                for (const [key, value] of Object.entries(importedData)) {
+                  localStorage.setItem(key, value);
+                }
+
+                // Reload the application to apply changes
+                location.reload();
+
+                this.notify("Settings imported successfully! Page will reload.");
+                resolve(true);
+              } catch (parseError) {
+                console.error("Error parsing imported data:", parseError);
+                this.notify("Error parsing imported file: " + parseError.message);
+                reject(parseError);
+              }
+            };
+
+            reader.onerror = () => {
+              console.error("Error reading file");
+              this.notify("Error reading file");
+              reject(new Error("Error reading file"));
+            };
+
+            reader.readAsText(file);
+          } catch (error) {
+            console.error("Error importing localStorage data:", error);
+            this.notify("Error importing settings: " + error.message);
+            reject(error);
+          }
+        });
+      },
+
+      // Handle import settings event from VideoList component
+      handleImportSettings: function(file) {
+        this.importLocalStorageData(file);
+      },
+
       cleanSubtitleText: function (text) {
         if (!text) return "";
 
@@ -1848,6 +2116,12 @@ function createApp() {
         }
 
         console.log("Video selected:", video);
+
+        // Dispose of SubtitlesOctopus instance if active
+        if (this.octopusInstance) {
+            this.octopusInstance.dispose();
+            this.octopusInstance = null;
+        }
 
         // Save progress of current video before loading new one
         if (this.videoUrl) {
@@ -3074,6 +3348,11 @@ function createApp() {
           this.handleAutoPauseCaptionUpdate(removedCaptionIds);
         }
 
+        // Sync with SubtitlesOctopus if active
+        if (this.octopusInstance && this.activeCaptionSource && this.activeCaptionSource.toLowerCase().endsWith('.ass')) {
+          // SubtitlesOctopus should handle time updates automatically through the video element
+        }
+
         console.log(
           "[DEBUG] onTimeUpdate - activeCaptions:",
           this.activeCaptions ? this.activeCaptions.length : "null"
@@ -3100,6 +3379,11 @@ function createApp() {
             var videoTime = time - (this.savedSettings.subtitleDelay || 0);
             this.currentTime = time;
             videoElement.currentTime = videoTime;
+
+            // Sync with SubtitlesOctopus if active
+            if (this.octopusInstance && this.activeCaptionSource && this.activeCaptionSource.toLowerCase().endsWith('.ass')) {
+              this.octopusInstance.setCurrentTime(videoTime);
+            }
 
             if (shouldPlay) {
               videoElement.play().catch((error) => {
@@ -3145,6 +3429,11 @@ function createApp() {
         if (video.paused) {
           video.play();
           this.isPlaying = true;
+
+          // Sync with SubtitlesOctopus if active
+          if (this.octopusInstance && this.activeCaptionSource && this.activeCaptionSource.toLowerCase().endsWith('.ass')) {
+            this.octopusInstance.videoPaused = false;
+          }
 
           if (this.autoSaveInterval) {
             clearInterval(this.autoSaveInterval);
@@ -3196,6 +3485,11 @@ function createApp() {
         video.pause();
         this.lastPauseTime = this.getCurrentTime();
         this.isPlaying = false;
+
+        // Sync with SubtitlesOctopus if active
+        if (this.octopusInstance && this.activeCaptionSource && this.activeCaptionSource.toLowerCase().endsWith('.ass')) {
+          this.octopusInstance.videoPaused = true;
+        }
       },
 
       idsToCaptions: function (ids) {
@@ -4538,6 +4832,10 @@ function createApp() {
       },
 
       loadVideoFromUrlInitial: function(videoPath) {
+        if (this.octopusInstance) {
+            this.octopusInstance.dispose();
+            this.octopusInstance = null;
+        }
         // Load a specific video by path (for initial routing - doesn't add to history)
         const videoObj = {
           path: videoPath,
@@ -4560,6 +4858,12 @@ function createApp() {
         }
 
         console.log("Video selected:", video);
+
+        // Dispose of SubtitlesOctopus instance if active
+        if (this.octopusInstance) {
+            this.octopusInstance.dispose();
+            this.octopusInstance = null;
+        }
 
         // Save progress of current video before loading new one
         if (this.videoUrl) {
@@ -4936,6 +5240,12 @@ function createApp() {
       }
     },
     beforeDestroy: function() {
+      // Dispose of SubtitlesOctopus instance if active
+      if (this.octopusInstance) {
+          this.octopusInstance.dispose();
+          this.octopusInstance = null;
+      }
+
       window.removeEventListener('hashchange', this.handleHashChange);
       this.isHandlingUrlChange = false;
     }
