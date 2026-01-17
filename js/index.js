@@ -19,6 +19,58 @@ var aDict;
 var analyze;
 var wn = console.warn;
 var subtitlesFileContent;
+function selectIndexDialog(items, labelFn = x => String(x)) {
+  return new Promise(resolve => {
+    const dlg = document.getElementById("indexDialog");
+    const list = document.getElementById("indexDialogList");
+
+    list.innerHTML = "";
+
+    items.forEach((item, i) => {
+      const li = document.createElement("li");
+      const btn = document.createElement("button");
+
+      btn.type = "button";
+      btn.textContent = `${i}: ${labelFn(item)}`;
+      btn.onclick = () => {
+        dlg.close();
+        resolve(i);
+      };
+
+      li.appendChild(btn);
+      list.appendChild(li);
+    });
+
+    dlg.onclose = () => resolve(null);
+    dlg.showModal();
+  });
+}
+
+function askAnimeInfo({ title = "", episode = "" } = {}) {
+  return new Promise(resolve => {
+    const dlg = document.getElementById("animeDialog");
+    const titleInput = document.getElementById("animeTitleInput");
+    const epInput = document.getElementById("animeEpisodeInput");
+
+    titleInput.value = title;
+    epInput.value = episode;
+
+    dlg.onclose = () => {
+      if (dlg.returnValue === "ok") {
+        resolve({
+          series: titleInput.value.trim(),
+          title: titleInput.value.trim(),
+          episode: parseInt(epInput.value, 10)
+        });
+      } else {
+        resolve(null);
+      }
+    };
+
+    dlg.showModal();
+  });
+}
+
 const parseWatchHistoryData = (savedSettings) => {
   const settings = JSON.parse(savedSettings);
   const watchHistory = settings.watchedHistory;
@@ -1221,6 +1273,33 @@ function createApp() {
   var vm = new Vue({
     el: "#app",
     template: `<div>
+    <dialog id="indexDialog">
+  <form method="dialog">
+    <h3>Select anime</h3>
+    <ul id="indexDialogList"></ul>
+    <menu>
+      <button value="cancel">Cancel</button>
+    </menu>
+  </form>
+</dialog>
+    <dialog id="animeDialog">
+  <form method="dialog">
+    <label>
+      Anime title
+      <input id="animeTitleInput" />
+    </label>
+    <br />
+    <label>
+      Episode
+      <input id="animeEpisodeInput" type="number" />
+    </label>
+    <br />
+    <menu>
+      <button value="cancel">Cancel</button>
+      <button value="ok">OK</button>
+    </menu>
+  </form>
+</dialog>
   <div v-show="showVideoList" class="video-list-view"
     style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 9999; background: #1a1a1a; color: white;">
     <div class="video-list-container">
@@ -1888,6 +1967,79 @@ function createApp() {
       },
     },
     methods: {
+      extractSeriesInfo: function (filename) {
+        function normalizeTitle(title) {
+          return title
+            .replace(/\.[^.]+$/, '')          // strip extension
+            .replace(/[._]/g, ' ')             // dots/underscores → spaces
+            .replace(/\b(S\d+E\d+|E\d+)\b/gi, '')
+            .replace(/\b(1080p|720p|480p|web|bd|bluray|x264|x265|h\.?264|h\.?265|aac|flac|subs?|dual|jpn|eng|cr)\b/gi, '')
+            .replace(/\[[^\]]*\]/g, '')        // [Group]
+            .replace(/\([^)]*\)/g, '')         // (Year)
+            .replace(/[^a-z0-9 ]/gi, '')       // kill punctuation
+            .replace(/\s+/g, ' ')
+            .trim()
+            .toLowerCase();
+        }
+
+        const decoded = decodeURIComponent(filename);
+
+        const patterns = [
+          // Handle explicit season/episode formats first (most specific)
+          /\[.*?\]\s*(.+?)\s*-\s*S(\d+)E(\d+)/i,           // [Group] Series - S01E01
+          /(.+?)\s*S(\d+)E(\d+)/i,                         // Series S01E01
+          /(.+?)\.S(\d+)E(\d+)/i,                          // Series.S01E01
+          
+          // Handle season with episode number
+          /\[.*?\]\s*(.+?)\s*S(\d+)\s*-\s*(\d+)/i,        // [Group] Series S4 - 13
+          /(.+?)\s*S(\d+)\s*-\s*(\d+)/i,                   // Series S4 - 13
+          
+          // Handle simple episode formats (less specific)
+          /\[.*?\]\s*(.+?)\s*-\s*(?:Episode\s*)?(\d+)/i,   // [Group] Series - Episode 01 or [Group] Series - 01
+          /(.+?)\s*-\s*Episode\s*(\d+)/i,                  // Series - Episode 01
+          /(.+?)\s*-\s*(\d+)/i,                            // Series - 01
+        ];
+
+        for (let pattern of patterns) {
+          const match = decoded.match(pattern);
+          if (match) {
+            let series = match[1].trim();
+            let season, episode;
+
+            // Clean up series name early
+            series = series.replace(/\[.*?\]/g, '').trim();
+            series = series.replace(/\s+(BD|WEB|1080p|720p|480p).*$/i, '').trim();
+
+            if (match[3]) {
+              // We have season and episode
+              season = parseInt(match[2]);
+              episode = parseInt(match[3]);
+            } else {
+              // Just episode, assume season 1
+              season = 1;
+              episode = parseInt(match[2]);
+            }
+
+            return {
+              series: normalizeTitle(series),
+              season: season,
+              episode: episode,
+              filename: decoded
+            };
+          }
+        }
+
+        // Fallback - try to extract any number as episode
+        const numberMatch = decoded.match(/(\d+)/);
+        const fallbackSeries = normalizeTitle(ecoded.replace(/\[.*?\]/g, '').trim().split(/[-.]/)[0]);
+        
+        return {
+          series: fallbackSeries,
+          season: 1,
+          episode: numberMatch ? parseInt(numberMatch[1]) : 1,
+          filename: decoded
+        };
+      },
       setupOctopus: function(sourceId) {
         if (typeof SubtitlesOctopus === 'undefined') {
           console.error("SubtitlesOctopus library not loaded. Please check the script tag in index.html");
@@ -2448,7 +2600,7 @@ function createApp() {
 
       setUpKeybindings: function () {
         var self = this;
-        window.addEventListener("keydown", function (e) {
+        window.addEventListener("keydown", async function (e) {
           if (
             /textarea|select/i.test(event.target.nodeName) ||
             event.target.type === "text"
@@ -2664,6 +2816,143 @@ function createApp() {
                 );
               }
               break;
+          case "o":
+          case "O":
+              stopEvent(e);
+              console.log("o key pressed.");
+              let animeInfo = self.extractSeriesInfo(self.videoFileName);
+              (async () => {
+                let an
+                if(e.shiftKey){
+                  an = await askAnimeInfo({
+                    title: animeInfo?.series,
+                    episode: String(animeInfo?.episode)
+                  });
+                  animeInfo.series = an.title
+                } else if(e.altKey){
+                  animeInfo = await askAnimeInfo({
+                    title: animeInfo?.series,
+                    episode: String(animeInfo?.episode)
+                  });
+                }
+                  if(animeInfo && !animeInfo.series){
+                      animeInfo.series = animeInfo.title || ''
+}
+                if (animeInfo) {
+                  self.notify(`Searching for ${animeInfo.series} episode ${animeInfo.episode}`);
+                  console.log("Extracted anime info:", animeInfo);
+                  fetch(`/api/anidb/search?q=${encodeURIComponent(animeInfo.series)}`)
+                    .then(response => response.json())
+                    .then(async(results) => {
+                      console.log("AniDB search results:", results);
+                      if (results && results.length > 0) {
+                        results = results.filter(r => { if(r.title){
+                          return true
+                        } else {
+                          return false
+                        }
+                          })
+                        let animeId;
+                        if (results.some(r => !r.title)) {
+                          const fuse = new Fuse(results, {
+                            keys: ['title'],
+                            includeScore: true,
+                            threshold: 0.4,
+                          });
+                          const fuseResults = fuse.search(animeInfo.series);
+                          console.log("Fuse.js search results:", fuseResults);
+                          if (fuseResults && fuseResults.length > 0) {
+                            animeId = fuseResults[0].item.id;
+                          } else {
+                            const index = await selectIndexDialog(
+                              results,
+                              r => r.title
+                            );
+
+                            if (index == null) index = 0;
+
+                            animeId = results[index].id;
+
+                          }
+                        } else {
+                          const fuse = new Fuse(results, {
+                            keys: ['title'],
+                            includeScore: true,
+                            threshold: 0.4,
+                          });
+                          const fuseResults = fuse.search(animeInfo.series);
+                          console.log("Fuse.js search results:", fuseResults);
+                          if (fuseResults && fuseResults.length > 0) {
+                            animeId = fuseResults[0].item.id;
+                          } else {
+                            if(results != []){
+                              const index = await selectIndexDialog(
+                                results,
+                                r => r.title
+                              );
+
+                              if (index == null) index = 0;
+
+                              animeId = results[index].id;
+
+                            }
+                          }
+                        }
+
+                        fetch(`/api/anidb/episodes/${animeId}`)
+                          .then(response => response.json())
+                          .then(episodes => {
+                            console.log("AniDB episodes results:", episodes);
+                            if (episodes && episodes.length > 0) {
+                              const episode = episodes.find(ep => ep.episode == animeInfo.episode);
+if (episode && episode.airDate) {
+    // 1. Create a Date object from the string
+    const date = new Date(episode.airDate);
+    
+    // 2. Subtract 1 day
+    date.setDate(date.getDate() - 2);
+    
+    // 3. Format it back to YYYY-MM-DD
+    // splitting at 'T' removes the time portion from the ISO string
+    const previousDay = date.toISOString().split('T')[0];
+
+    // 4. Construct the URL
+    const url = `https://desuarchive.org/_/search/subject/${encodeURIComponent(animeInfo.series)}/start/${previousDay}/order/asc/`;
+                                //const win = 
+                                window.open(url, "_blank");
+                                
+                                //if (win) {
+                                //  win.location.href = url;
+                                //}
+                                navigator.clipboard.writeText(url);
+                              } else {
+                                self.notify(`Could not find air date for episode ${animeInfo.episode}`);
+                                console.log(`Could not find air date for episode ${animeInfo.episode}`);
+                              }
+                            } else {
+                              self.notify(`Could not find episode list for ${animeInfo.series}`);
+                              console.log(`Could not find episode list for ${animeInfo.series}`);
+                            }
+                          })
+                          .catch(err => {
+                            self.notify(`Error getting episodes: ${err.message}`);
+                            console.error(`Error getting episodes: ${err.message}`);
+                          });
+                      } else {
+                        self.notify(`Could not find ${animeInfo.series} on AniDB`);
+                        console.log(`Could not find ${animeInfo.series} on AniDB`);
+                      }
+                    })
+                    .catch(err => {
+                      self.notify(`Error searching AniDB: ${err.message}`);
+                      console.error(`Error searching AniDB: ${err.message}`);
+                    });
+                } else {
+                  self.notify("Could not extract anime title from filename");
+                  console.log("Could not extract anime title from filename:", self.videoFileName);
+                }
+              })();
+              break;
             case "b":
             case "B":
               if (sidebarNG) return;
@@ -2748,7 +3037,7 @@ function createApp() {
               } else {
                 if (e.shiftKey) {
                   self.savedSettings.subtitle2FontSize = Math.max(
-                    0.5,
+                    0.01,
                     self.savedSettings.subtitle2FontSize - 0.1
                   );
                   self.notify(
@@ -2758,7 +3047,7 @@ function createApp() {
                   );
                 } else {
                   self.savedSettings.subtitle1FontSize = Math.max(
-                    0.5,
+                    0.01,
                     self.savedSettings.subtitle1FontSize - 0.1
                   );
                   self.notify(
@@ -2805,7 +3094,7 @@ function createApp() {
               } else if (e.ctrlKey) {
                 if (e.shiftKey) {
                   self.savedSettings.subtitle2TextShadowSize = Math.min(
-                    10,
+                    30,
                     self.savedSettings.subtitle2TextShadowSize + 1
                   );
                   self.notify(
@@ -2813,7 +3102,7 @@ function createApp() {
                   );
                 } else {
                   self.savedSettings.subtitle1TextShadowSize = Math.min(
-                    10,
+                    30,
                     self.savedSettings.subtitle1TextShadowSize + 1
                   );
                   self.notify(
@@ -2823,7 +3112,7 @@ function createApp() {
               } else {
                 if (e.shiftKey) {
                   self.savedSettings.subtitle2FontSize = Math.min(
-                    3.0,
+                    16.0,
                     self.savedSettings.subtitle2FontSize + 0.1
                   );
                   self.notify(
@@ -2833,7 +3122,7 @@ function createApp() {
                   );
                 } else {
                   self.savedSettings.subtitle1FontSize = Math.min(
-                    3.0,
+                    16.0,
                     self.savedSettings.subtitle1FontSize + 0.1
                   );
                   self.notify(
@@ -2849,11 +3138,11 @@ function createApp() {
               stopEvent(e);
               self.savedSettings.subtitle1FontSize = Math.max(
                 self.savedSettings.subtitle1FontSize - 0.15,
-                0.5
+                0.01
               );
               self.savedSettings.subtitle2FontSize = Math.max(
                 self.savedSettings.subtitle2FontSize - 0.15,
-                0.5
+                0.01
               );
               self.notify(
                 `Font sizes decreased: ${self.savedSettings.subtitle1FontSize.toFixed(
@@ -2866,11 +3155,11 @@ function createApp() {
               stopEvent(e);
               self.savedSettings.subtitle1FontSize = Math.min(
                 self.savedSettings.subtitle1FontSize + 0.15,
-                3.0
+                16.0
               );
               self.savedSettings.subtitle2FontSize = Math.min(
                 self.savedSettings.subtitle2FontSize + 0.15,
-                3.0
+                16.0
               );
               self.notify(
                 `Font sizes increased: ${self.savedSettings.subtitle1FontSize.toFixed(

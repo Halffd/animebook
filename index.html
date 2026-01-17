@@ -102,6 +102,25 @@
     [v-cloak] {
       display: none;
     }
+    dialog {
+      border: none;
+      border-radius: 8px;
+      padding: 1em;
+      background: #111;
+      color: #eee;
+    }
+    #indexDialog ul {
+      list-style: none;
+      padding: 0;
+      max-height: 50vh;
+      overflow-y: auto;
+    }
+
+    #indexDialog button {
+      width: 100%;
+      text-align: left;
+      padding: 0.4em;
+    }
 
     html,
     body,
@@ -1483,6 +1502,7 @@
   <!-- Load Vue 2.6.14 -->
   <script src="https://cdn.jsdelivr.net/npm/vue@2.6.14/dist/vue.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/libass-wasm@4.1.0/dist/js/subtitles-octopus.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/fuse.js@6.6.2/dist/fuse.min.js"></script>
   <!-- Load your scripts in order -->
    <script src="js/wanakana.min.js"></script>
   <script src="js/kuromoji.js"></script>

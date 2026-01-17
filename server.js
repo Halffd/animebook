@@ -26,6 +26,8 @@ function getPort(defaultPort = 5555) {
   return defaultPort;
 }
 
+import anidbRoutes from './server/routes/anidb.js';
+
 const app = express();
 
 // Security headers via Helmet
@@ -42,6 +44,8 @@ app.use(helmet.contentSecurityPolicy({
     scriptSrcElem: ["'self'", 'https://cdn.jsdelivr.net', 'https://unpkg.com'],
   }
 }));
+
+app.use("/api/anidb", anidbRoutes);
 
 // CORS configuration
 const corsOptions = {
